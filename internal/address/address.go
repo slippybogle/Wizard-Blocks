@@ -87,8 +87,10 @@ func Decode(n *Network, s string) (*Address, error) {
 	switch n.Coin {
 	case BTC:
 		lower := strings.ToLower(s)
-		if strings.HasPrefix(lower, n.Bech32HRP+"1") {
-			return decodeSegwit(n, s)
+		for _, hrp := range []string{n.Bech32HRP, "bc", "tb", "bcrt"} {
+			if strings.HasPrefix(lower, hrp+"1") {
+				return decodeSegwit(n, s) // reports a wrong-network prefix clearly
+			}
 		}
 		return decodeBase58(n, s)
 	case BCH:

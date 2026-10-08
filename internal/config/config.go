@@ -1,0 +1,253 @@
+// Package config loads and validates the engine configuration: a JSON file
+// (optional) overlaid with WB_* environment variables.
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// Node configures the full node connection.
+type Node struct {
+	RPCURL           string `json:"rpc_url"`
+	RPCUser          string `json:"rpc_user"`
+	RPCPassword      string `json:"rpc_password"`
+	RPCCookieFile    string `json:"rpc_cookie_file"`
+	ZMQHashBlock     string `json:"zmq_hashblock"`
+	PollIntervalMs   int    `json:"poll_interval_ms"`
+	TemplateRefreshS int    `json:"template_refresh_s"`
+	RPCTimeoutS      int    `json:"rpc_timeout_s"`
+}
+
+// Payout configures where block rewards go.
+type Payout struct {
+	Mode        string `json:"mode"` // fixed | miner
+	Address     string `json:"address"`
+	CoinbaseTag string `json:"coinbase_tag"`
+}
+
+// Stratum configures the miner-facing server.
+type Stratum struct {
+	Listen             string  `json:"listen"`
+	Extranonce2Size    int     `json:"extranonce2_size"`
+	VersionRollingMask string  `json:"version_rolling_mask"`
+	MaxConnections     int     `json:"max_connections"`
+	MaxConnsPerIP      int     `json:"max_connections_per_ip"`
+	AuthTimeoutS       int     `json:"auth_timeout_s"`
+	IdleTimeoutS       int     `json:"idle_timeout_s"`
+	MaxLineBytes       int     `json:"max_line_bytes"`
+	MsgRatePerS        float64 `json:"msg_rate_per_s"`
+	MsgBurst           float64 `json:"msg_burst"`
+}
+
+// Vardiff configures per-connection difficulty.
+type Vardiff struct {
+	Initial      float64 `json:"initial"`
+	Min          float64 `json:"min"`
+	Max          float64 `json:"max"`
+	TargetShareS float64 `json:"target_share_s"`
+	RetargetS    float64 `json:"retarget_s"`
+	VariancePct  float64 `json:"variance_pct"`
+}
+
+// API configures the local stats endpoint.
+type API struct {
+	Listen     string `json:"listen"`
+	Prometheus bool   `json:"prometheus"`
+}
+
+// Log configures logging.
+type Log struct {
+	Level  string `json:"level"`
+	Format string `json:"format"`
+}
+
+// Config is the complete configuration.
+type Config struct {
+	Coin    string  `json:"coin"`
+	Node    Node    `json:"node"`
+	Payout  Payout  `json:"payout"`
+	Stratum Stratum `json:"stratum"`
+	Vardiff Vardiff `json:"vardiff"`
+	API     API     `json:"api"`
+	Log     Log     `json:"log"`
+	DataDir string  `json:"data_dir"`
+}
+
+// Default returns the default configuration.
+func Default() Config {
+	return Config{
+		Coin: "btc",
+		Node: Node{RPCURL: "http://127.0.0.1:8332", PollIntervalMs: 1000, TemplateRefreshS: 30, RPCTimeoutS: 30},
+		Payout: Payout{
+			Mode: "fixed", CoinbaseTag: "/wizard-blocks/",
+		},
+		Stratum: Stratum{
+			Listen: "0.0.0.0:3333", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
+			MaxConnections: 1024, MaxConnsPerIP: 64, AuthTimeoutS: 60, IdleTimeoutS: 600,
+			MaxLineBytes: 16384, MsgRatePerS: 100, MsgBurst: 500,
+		},
+		Vardiff: Vardiff{Initial: 1024, Min: 1, Max: 1e15, TargetShareS: 10, RetargetS: 60, VariancePct: 30},
+		API:     API{Listen: "127.0.0.1:8080", Prometheus: true},
+		Log:     Log{Level: "info", Format: "json"},
+	}
+}
+
+// Load reads path (if non-empty) over the defaults, then applies env.
+func Load(path string, env func(string) string) (Config, error) {
+	c := Default()
+	if path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return c, err
+		}
+		dec := json.NewDecoder(strings.NewReader(string(b)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&c); err != nil {
+			return c, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	if err := c.applyEnv(env); err != nil {
+		return c, err
+	}
+	return c, c.Validate()
+}
+
+func (c *Config) applyEnv(env func(string) string) error {
+	str := map[string]*string{
+		"WB_COIN": &c.Coin, "WB_RPC_URL": &c.Node.RPCURL, "WB_RPC_USER": &c.Node.RPCUser,
+		"WB_RPC_PASSWORD": &c.Node.RPCPassword, "WB_RPC_COOKIE_FILE": &c.Node.RPCCookieFile,
+		"WB_ZMQ_HASHBLOCK": &c.Node.ZMQHashBlock, "WB_PAYOUT_MODE": &c.Payout.Mode,
+		"WB_PAYOUT_ADDRESS": &c.Payout.Address, "WB_COINBASE_TAG": &c.Payout.CoinbaseTag,
+		"WB_STRATUM_LISTEN": &c.Stratum.Listen, "WB_VERSION_ROLLING_MASK": &c.Stratum.VersionRollingMask,
+		"WB_API_LISTEN": &c.API.Listen, "WB_LOG_LEVEL": &c.Log.Level, "WB_LOG_FORMAT": &c.Log.Format,
+		"WB_DATA_DIR": &c.DataDir,
+	}
+	for k, p := range str {
+		if v, ok := lookup(env, k); ok {
+			*p = v
+		}
+	}
+	ints := map[string]*int{
+		"WB_POLL_INTERVAL_MS": &c.Node.PollIntervalMs, "WB_TEMPLATE_REFRESH_S": &c.Node.TemplateRefreshS,
+		"WB_EXTRANONCE2_SIZE": &c.Stratum.Extranonce2Size, "WB_MAX_CONNECTIONS": &c.Stratum.MaxConnections,
+		"WB_MAX_CONNECTIONS_PER_IP": &c.Stratum.MaxConnsPerIP,
+	}
+	for k, p := range ints {
+		if v, ok := lookup(env, k); ok {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
+			*p = n
+		}
+	}
+	floats := map[string]*float64{
+		"WB_VARDIFF_INITIAL": &c.Vardiff.Initial, "WB_VARDIFF_MIN": &c.Vardiff.Min,
+		"WB_VARDIFF_MAX": &c.Vardiff.Max, "WB_VARDIFF_TARGET_SHARE_S": &c.Vardiff.TargetShareS,
+	}
+	for k, p := range floats {
+		if v, ok := lookup(env, k); ok {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
+			*p = f
+		}
+	}
+	if v, ok := lookup(env, "WB_PROMETHEUS"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("WB_PROMETHEUS: %w", err)
+		}
+		c.API.Prometheus = b
+	}
+	return nil
+}
+
+func lookup(env func(string) string, k string) (string, bool) {
+	if env == nil {
+		return "", false
+	}
+	v := env(k)
+	return v, v != ""
+}
+
+// VersionMask parses Stratum.VersionRollingMask.
+func (c *Config) VersionMask() uint32 {
+	v, _ := strconv.ParseUint(c.Stratum.VersionRollingMask, 16, 32)
+	return uint32(v)
+}
+
+// Validate checks the configuration for internal consistency. Address
+// validity is checked later, against the node.
+func (c *Config) Validate() error {
+	var errs []error
+	add := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
+	c.Coin = strings.ToLower(c.Coin)
+	if c.Coin != "btc" && c.Coin != "bch" {
+		add("coin must be btc or bch, got %q", c.Coin)
+	}
+	if c.Node.RPCURL == "" {
+		add("node.rpc_url is required")
+	}
+	if c.Node.RPCUser == "" && c.Node.RPCCookieFile == "" {
+		add("node.rpc_user/rpc_password or node.rpc_cookie_file is required")
+	}
+	if c.Node.ZMQHashBlock != "" && !strings.HasPrefix(c.Node.ZMQHashBlock, "tcp://") {
+		add("node.zmq_hashblock must be tcp://host:port")
+	}
+	if c.Node.PollIntervalMs < 100 || c.Node.PollIntervalMs > 60000 {
+		add("node.poll_interval_ms must be 100..60000")
+	}
+	if c.Node.TemplateRefreshS < 1 || c.Node.TemplateRefreshS > 600 {
+		add("node.template_refresh_s must be 1..600")
+	}
+	if c.Node.RPCTimeoutS < 1 {
+		add("node.rpc_timeout_s must be positive")
+	}
+	switch c.Payout.Mode {
+	case "fixed":
+		if strings.TrimSpace(c.Payout.Address) == "" {
+			add("payout.address is required in fixed mode")
+		}
+	case "miner":
+	default:
+		add("payout.mode must be fixed or miner, got %q", c.Payout.Mode)
+	}
+	if len(c.Payout.CoinbaseTag) > 60 {
+		add("payout.coinbase_tag must be at most 60 bytes")
+	}
+	if c.Stratum.Extranonce2Size < 2 || c.Stratum.Extranonce2Size > 8 {
+		add("stratum.extranonce2_size must be 2..8")
+	}
+	if v, err := strconv.ParseUint(c.Stratum.VersionRollingMask, 16, 32); err != nil || len(c.Stratum.VersionRollingMask) > 8 {
+		add("stratum.version_rolling_mask must be hex (e.g. 1fffe000)")
+	} else if uint32(v)&0xe0001fff != 0 {
+		add("stratum.version_rolling_mask may only contain BIP320 bits (subset of 1fffe000)")
+	}
+	if c.Stratum.MaxConnections < 1 || c.Stratum.MaxConnsPerIP < 1 {
+		add("stratum connection limits must be positive")
+	}
+	if c.Stratum.AuthTimeoutS < 1 || c.Stratum.IdleTimeoutS < 1 {
+		add("stratum timeouts must be positive")
+	}
+	if c.Stratum.MaxLineBytes < 1024 {
+		add("stratum.max_line_bytes must be >= 1024")
+	}
+	if c.Stratum.MsgRatePerS <= 0 || c.Stratum.MsgBurst < 1 {
+		add("stratum message rate limits must be positive")
+	}
+	v := c.Vardiff
+	if !(v.Min > 0) || !(v.Max >= v.Min) || v.Initial < v.Min || v.Initial > v.Max {
+		add("vardiff requires 0 < min <= initial <= max")
+	}
+	if v.TargetShareS <= 0 || v.RetargetS <= 0 || v.VariancePct < 0 {
+		add("vardiff target_share_s/retarget_s must be positive")
+	}
+	return errors.Join(errs...)
+}

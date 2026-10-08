@@ -93,18 +93,18 @@ type BlockRecord struct {
 
 // NodeStatus describes the full node connection.
 type NodeStatus struct {
-	Connected    bool      `json:"connected"`
-	Synced       bool      `json:"synced"`
-	Chain        string    `json:"chain"`
-	Height       int64     `json:"height"`
-	Headers      int64     `json:"headers"`
-	BestHash     string    `json:"best_hash"`
-	Subversion   string    `json:"subversion"`
-	ZMQEnabled   bool      `json:"zmq_enabled"`
-	ZMQConnected bool      `json:"zmq_connected"`
-	ZMQMessages  uint64    `json:"zmq_messages"`
-	LastError    string    `json:"last_error,omitempty"`
-	LastErrorAt  time.Time `json:"last_error_at,omitempty"`
+	Connected    bool       `json:"connected"`
+	Synced       bool       `json:"synced"`
+	Chain        string     `json:"chain"`
+	Height       int64      `json:"height"`
+	Headers      int64      `json:"headers"`
+	BestHash     string     `json:"best_hash"`
+	Subversion   string     `json:"subversion"`
+	ZMQEnabled   bool       `json:"zmq_enabled"`
+	ZMQConnected bool       `json:"zmq_connected"`
+	ZMQMessages  uint64     `json:"zmq_messages"`
+	LastError    string     `json:"last_error,omitempty"`
+	LastErrorAt  *time.Time `json:"last_error_at,omitempty"`
 }
 
 // TemplateInfo describes the current block template.
@@ -293,6 +293,22 @@ func (c *Collector) BlockSubmitted(r BlockRecord) {
 	}
 	c.mu.Unlock()
 	_ = c.Save()
+}
+
+// Prune forgets disconnected workers idle for longer than maxIdle.
+func (c *Collector) Prune(maxIdle time.Duration) {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, w := range c.workers {
+		last := w.LastShare
+		if last.IsZero() {
+			last = w.FirstSeen
+		}
+		if w.Connections == 0 && now.Sub(last) > maxIdle {
+			delete(c.workers, k)
+		}
+	}
 }
 
 // Blocks returns a copy of the block records.

@@ -172,7 +172,8 @@ func (m *Manager) Wait(ctx context.Context) {
 func (m *Manager) nodeError(err error) {
 	m.st.SetNode(func(n *stats.NodeStatus) {
 		n.Connected = false
-		n.LastError, n.LastErrorAt = err.Error(), time.Now()
+		now := time.Now()
+		n.LastError, n.LastErrorAt = err.Error(), &now
 	})
 }
 
@@ -292,8 +293,9 @@ func (m *Manager) update(ctx context.Context, reason string) {
 	m.mu.Lock()
 	prev := m.cur
 	clean := prev == nil || prev.Tmpl.PrevHash != t.PrevHash
-	if !clean && reason == "poll" {
-		// Poll noticed a tip we already have work for (race with ZMQ); nothing to do.
+	if !clean && reason != "refresh" {
+		// A new-tip trigger (zmq/poll/kick) raced with another one that
+		// already produced work for this tip; mempool refreshes are periodic.
 		m.mu.Unlock()
 		return
 	}
@@ -311,7 +313,7 @@ func (m *Manager) update(ctx context.Context, reason string) {
 	listeners := append([]func(*Work){}, m.listeners...)
 	m.mu.Unlock()
 
-	m.st.SetNode(func(n *stats.NodeStatus) { n.Connected = true; n.LastError = "" })
+	m.st.SetNode(func(n *stats.NodeStatus) { n.Connected, n.LastError, n.LastErrorAt = true, "", nil })
 	m.st.SetTemplate(func(ti *stats.TemplateInfo) {
 		ti.Height, ti.PrevHash, ti.Transactions = t.Height, t.PrevHash.String(), t.TxCount()
 		ti.Fees, ti.CoinbaseValue, ti.NetworkDiff = t.TotalFees, t.CoinbaseValue, t.NetworkDiff
