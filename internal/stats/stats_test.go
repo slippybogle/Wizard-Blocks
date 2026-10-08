@@ -64,3 +64,18 @@ func TestCollectorAndPersistence(t *testing.T) {
 		t.Fatal("idle worker not pruned")
 	}
 }
+
+func TestRounds(t *testing.T) {
+	c := New("bch", "test", "")
+	c.SetTemplate(func(ti *TemplateInfo) { ti.Height, ti.PrevHash, ti.NetworkDiff = 10, "aa", 1000 })
+	c.ShareAccepted("w", 2, 50, "x")
+	c.ShareAccepted("w", 2, 7, "x")
+	c.SetTemplate(func(ti *TemplateInfo) { ti.Transactions = 5 }) // refresh, same prevhash
+	c.SetTemplate(func(ti *TemplateInfo) { ti.Height, ti.PrevHash = 11, "bb" })
+	c.ShareAccepted("v", 2, 9, "x")
+	r := c.Rounds(10)
+	if len(r) != 2 || r[0].Height != 11 || r[0].BestDiff != 9 || r[1].Height != 10 ||
+		r[1].BestDiff != 50 || r[1].Shares != 2 || r[1].SumDiff != 4 || r[1].NetworkDiff != 1000 || r[1].End.IsZero() {
+		t.Fatalf("%+v", r)
+	}
+}

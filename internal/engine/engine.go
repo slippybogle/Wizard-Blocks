@@ -17,6 +17,7 @@ import (
 	"github.com/slippybogle/wizard-blocks/internal/node"
 	"github.com/slippybogle/wizard-blocks/internal/stats"
 	"github.com/slippybogle/wizard-blocks/internal/stratum"
+	"github.com/slippybogle/wizard-blocks/internal/ui"
 	"github.com/slippybogle/wizard-blocks/internal/work"
 )
 
@@ -29,6 +30,8 @@ type Engine struct {
 	mgr   *work.Manager
 	srv   *stratum.Server
 	api   *stats.Server
+	ui    *ui.Server
+	ver   string
 	net   *address.Network
 	fixed *stratum.Payout
 
@@ -43,6 +46,7 @@ func New(cfg config.Config, version string, log *slog.Logger) *Engine {
 		log:   log,
 		rpc:   node.NewClient(cfg.Node.RPCURL, cfg.Node.RPCUser, cfg.Node.RPCPassword, cfg.Node.RPCCookieFile, time.Duration(cfg.Node.RPCTimeoutS)*time.Second),
 		st:    stats.New(cfg.Coin, version, cfg.DataDir),
+		ver:   version,
 		cache: map[string]*stratum.Payout{},
 	}
 }
@@ -55,6 +59,14 @@ func (e *Engine) StratumAddr() string { return e.srv.Addr() }
 
 // APIAddr returns the bound API address (after Start).
 func (e *Engine) APIAddr() string { return e.api.Addr() }
+
+// UIAddr returns the bound web UI address ("" if disabled).
+func (e *Engine) UIAddr() string {
+	if e.ui == nil {
+		return ""
+	}
+	return e.ui.Addr()
+}
 
 // Manager exposes the work manager (used by tests).
 func (e *Engine) Manager() *work.Manager { return e.mgr }
@@ -220,7 +232,21 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err := e.api.Listen(e.cfg.API.Listen); err != nil {
 		return fmt.Errorf("api listen: %w", err)
 	}
-	e.log.Info("listening", "stratum", e.srv.Addr(), "api", e.api.Addr(), "payout_mode", e.cfg.Payout.Mode)
+	if e.cfg.UI.Listen != "" {
+		payout := ""
+		if e.fixed != nil {
+			payout = e.fixed.Address
+		}
+		e.ui = ui.New(ui.Config{
+			Coin: e.cfg.Coin, Version: e.ver, StratumPort: e.cfg.StratumPort(), PayoutMode: e.cfg.Payout.Mode,
+			PayoutAddress: payout, Extranonce2Size: e.cfg.Stratum.Extranonce2Size,
+			VersionMask: e.cfg.Stratum.VersionRollingMask, DataDir: e.cfg.DataDir,
+		}, e.st, e.rpc, e.log)
+		if err := e.ui.Listen(e.cfg.UI.Listen); err != nil {
+			return fmt.Errorf("ui listen: %w", err)
+		}
+	}
+	e.log.Info("listening", "stratum", e.srv.Addr(), "api", e.api.Addr(), "ui", e.UIAddr(), "payout_mode", e.cfg.Payout.Mode)
 	return nil
 }
 
@@ -228,7 +254,11 @@ func (e *Engine) Start(ctx context.Context) error {
 // disconnected, in-flight block submissions are allowed to finish, and state
 // is persisted.
 func (e *Engine) Run(ctx context.Context) error {
-	errc := make(chan error, 3)
+	errc := make(chan error, 4)
+	if e.ui != nil {
+		go func() { errc <- e.ui.Serve() }()
+		go e.ui.Run(ctx)
+	}
 	go func() { errc <- e.srv.Serve(ctx) }()
 	go func() { errc <- e.api.Serve() }()
 	go func() { errc <- e.mgr.Run(ctx) }()
@@ -259,6 +289,9 @@ loop:
 	cancel()
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	_ = e.api.Shutdown(sctx)
+	if e.ui != nil {
+		_ = e.ui.Shutdown(sctx)
+	}
 	cancel()
 	if err := e.st.Save(); err != nil {
 		e.log.Warn("saving state failed", "err", err)

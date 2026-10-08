@@ -148,7 +148,26 @@ type Collector struct {
 	blocks      []BlockRecord
 	connections int
 	persistPath string
+	round       Round   // shares on the current block template (prevhash)
+	rounds      []Round // completed rounds, oldest first
 }
+
+// Round aggregates shares mined on one previous-block hash ("job" in the
+// UI): the best share relative to network difficulty is the basis of the
+// UI's creature log and luck percentile.
+type Round struct {
+	Height      int64     `json:"height"`
+	PrevHash    string    `json:"prev_hash"`
+	NetworkDiff float64   `json:"network_difficulty"`
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end,omitempty"`
+	Shares      uint64    `json:"shares"`
+	SumDiff     float64   `json:"sum_difficulty"` // total credited share difficulty
+	BestDiff    float64   `json:"best_difficulty"`
+	BestWorker  string    `json:"best_worker"`
+}
+
+const maxRounds = 500
 
 // New creates a collector. If dataDir is non-empty, found blocks and the
 // best share are persisted there across restarts.
@@ -257,6 +276,11 @@ func (c *Collector) ShareAccepted(worker string, shareDiff, achieved float64, in
 	if achieved > c.bestDiff {
 		c.bestDiff, c.bestWorker = achieved, worker
 	}
+	c.round.Shares++
+	c.round.SumDiff += shareDiff
+	if achieved > c.round.BestDiff {
+		c.round.BestDiff, c.round.BestWorker = achieved, worker
+	}
 }
 
 // ShareRejected records a rejected share.
@@ -283,7 +307,33 @@ func (c *Collector) SetNode(f func(*NodeStatus)) {
 func (c *Collector) SetTemplate(f func(*TemplateInfo)) {
 	c.mu.Lock()
 	f(&c.tmpl)
+	if c.tmpl.PrevHash != c.round.PrevHash {
+		now := time.Now()
+		if c.round.PrevHash != "" {
+			c.round.End = now
+			c.rounds = append(c.rounds, c.round)
+			if len(c.rounds) > maxRounds {
+				c.rounds = c.rounds[len(c.rounds)-maxRounds:]
+			}
+		}
+		c.round = Round{Height: c.tmpl.Height, PrevHash: c.tmpl.PrevHash, NetworkDiff: c.tmpl.NetworkDiff, Start: now}
+	}
 	c.mu.Unlock()
+}
+
+// Rounds returns the current round followed by up to n completed rounds,
+// newest first.
+func (c *Collector) Rounds(n int) []Round {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := []Round{}
+	if c.round.PrevHash != "" {
+		out = append(out, c.round)
+	}
+	for i := len(c.rounds) - 1; i >= 0 && len(out) < n+1; i-- {
+		out = append(out, c.rounds[i])
+	}
+	return out
 }
 
 // BlockSubmitted records (or updates, keyed by hash) a block record.

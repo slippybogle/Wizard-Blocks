@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0a14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Wizard-Blocks</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/app.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<div id="crt" aria-hidden="true"></div>
+
+<header class="topbar">
+  <a class="brand" href="#/mine" aria-label="Wizard-Blocks"><canvas id="brand"></canvas></a>
+  <nav class="tabs" aria-label="Pages">
+    <a href="#/mine" data-page="mine" class="tab"><span data-px="1.5">The Mine</span></a>
+    <a href="#/ledger" data-page="ledger" class="tab"><span data-px="1.5">The Ledger</span></a>
+  </nav>
+  <div class="toggles">
+    <span id="link" class="link" title="Live link to the engine"><span class="dot"></span><span class="sr">link</span></span>
+    <button id="btn-sound" class="tbtn" aria-pressed="false" title="Sound"><span data-px="1.5">Sound</span></button>
+    <button id="btn-crt" class="tbtn" aria-pressed="false" title="CRT scanlines"><span data-px="1.5">CRT</span></button>
+  </div>
+</header>
+
+<main>
+  <section id="page-mine" class="page" aria-label="The Mine">
+    <div class="scene-wrap"><canvas id="scene" aria-label="Pixel-art mine with a wizard"></canvas></div>
+    <div class="hud">
+      <div class="hud-top">
+        <div class="panel" id="hud-hash"></div>
+        <div class="panel" id="hud-chain"></div>
+      </div>
+      <div id="pending-pill" class="pill" hidden><canvas></canvas></div>
+      <div class="hud-bottom">
+        <div class="panel" id="hud-loot"></div>
+        <div class="panel trophies" id="hud-trophies"></div>
+      </div>
+    </div>
+    <div id="banner" class="banner" hidden><canvas></canvas><canvas class="sub"></canvas></div>
+  </section>
+
+  <section id="page-ledger" class="page ledger" aria-label="The Ledger" hidden>
+    <div class="ledger-inner">
+      <section class="card" id="sec-node">
+        <h2 data-px="2">Node</h2>
+        <dl class="kv" id="node-kv"></dl>
+      </section>
+
+      <section class="card" id="sec-stratum">
+        <h2 data-px="2">Stratum</h2>
+        <div class="chart-head">
+          <h3 data-px="1.5">Pool hashrate</h3>
+          <div class="seg" role="tablist" id="range-tabs">
+            <button role="tab" data-range="1h" aria-selected="true">1H</button>
+            <button role="tab" data-range="24h">24H</button>
+            <button role="tab" data-range="7d">7D</button>
+          </div>
+        </div>
+        <div class="chart" id="chart"></div>
+        <div class="grid3">
+          <dl class="kv" id="shares-kv"></dl>
+          <dl class="kv" id="odds-kv"></dl>
+          <dl class="kv" id="conn-kv"></dl>
+        </div>
+        <h3 data-px="1.5">Workers</h3>
+        <div class="table-wrap"><table id="workers"><thead><tr>
+          <th>Worker</th><th>Status</th><th class="num">Hashrate (5m)</th><th class="num">Accepted / rejected</th><th class="num">Best diff</th><th class="num">Current diff</th><th>Last seen</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="card" id="sec-blocks">
+        <h2 data-px="2">Blocks</h2>
+        <div class="table-wrap"><table id="blocks"><thead><tr>
+          <th class="num">Height</th><th>Hash</th><th class="num">Reward</th><th>Worker</th><th>Time</th><th class="num">Confirmations</th><th>Status</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="card" id="sec-creatures">
+        <h2 data-px="2">Creature log</h2>
+        <p class="note">Each job (one block template) is judged by its best share. Tier = how close it came to the network difficulty; luck = share of equally-sized jobs that would have done worse.</p>
+        <div class="table-wrap"><table id="rounds"><thead><tr>
+          <th class="num">Job (height)</th><th>Creature</th><th class="num">Best share</th><th class="num">% of network diff</th><th class="num">Luck percentile</th><th class="num">Shares</th><th>Duration</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+    </div>
+  </section>
+</main>
+</body>
+</html>

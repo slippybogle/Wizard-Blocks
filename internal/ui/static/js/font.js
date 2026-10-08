@@ -1,0 +1,168 @@
+// Chunky 5x7 pixel font, drawn with integer scaling only.
+
+const G = {
+  A: [' ### ', '#   #', '#   #', '#####', '#   #', '#   #', '#   #'],
+  B: ['#### ', '#   #', '#   #', '#### ', '#   #', '#   #', '#### '],
+  C: [' ### ', '#   #', '#    ', '#    ', '#    ', '#   #', ' ### '],
+  D: ['#### ', '#   #', '#   #', '#   #', '#   #', '#   #', '#### '],
+  E: ['#####', '#    ', '#    ', '#### ', '#    ', '#    ', '#####'],
+  F: ['#####', '#    ', '#    ', '#### ', '#    ', '#    ', '#    '],
+  G: [' ### ', '#   #', '#    ', '# ###', '#   #', '#   #', ' ####'],
+  H: ['#   #', '#   #', '#   #', '#####', '#   #', '#   #', '#   #'],
+  I: [' ### ', '  #  ', '  #  ', '  #  ', '  #  ', '  #  ', ' ### '],
+  J: ['  ###', '   # ', '   # ', '   # ', '   # ', '#  # ', ' ##  '],
+  K: ['#   #', '#  # ', '# #  ', '##   ', '# #  ', '#  # ', '#   #'],
+  L: ['#    ', '#    ', '#    ', '#    ', '#    ', '#    ', '#####'],
+  M: ['#   #', '## ##', '# # #', '# # #', '#   #', '#   #', '#   #'],
+  N: ['#   #', '##  #', '# # #', '#  ##', '#   #', '#   #', '#   #'],
+  O: [' ### ', '#   #', '#   #', '#   #', '#   #', '#   #', ' ### '],
+  P: ['#### ', '#   #', '#   #', '#### ', '#    ', '#    ', '#    '],
+  Q: [' ### ', '#   #', '#   #', '#   #', '# # #', '#  # ', ' ## #'],
+  R: ['#### ', '#   #', '#   #', '#### ', '# #  ', '#  # ', '#   #'],
+  S: [' ####', '#    ', '#    ', ' ### ', '    #', '    #', '#### '],
+  T: ['#####', '  #  ', '  #  ', '  #  ', '  #  ', '  #  ', '  #  '],
+  U: ['#   #', '#   #', '#   #', '#   #', '#   #', '#   #', ' ### '],
+  V: ['#   #', '#   #', '#   #', '#   #', '#   #', ' # # ', '  #  '],
+  W: ['#   #', '#   #', '#   #', '# # #', '# # #', '# # #', ' # # '],
+  X: ['#   #', '#   #', ' # # ', '  #  ', ' # # ', '#   #', '#   #'],
+  Y: ['#   #', '#   #', ' # # ', '  #  ', '  #  ', '  #  ', '  #  '],
+  Z: ['#####', '    #', '   # ', '  #  ', ' #   ', '#    ', '#####'],
+  0: [' ### ', '#   #', '#  ##', '# # #', '##  #', '#   #', ' ### '],
+  1: ['  #  ', ' ##  ', '  #  ', '  #  ', '  #  ', '  #  ', ' ### '],
+  2: [' ### ', '#   #', '    #', '   # ', '  #  ', ' #   ', '#####'],
+  3: ['#####', '   # ', '  #  ', '   # ', '    #', '#   #', ' ### '],
+  4: ['   # ', '  ## ', ' # # ', '#  # ', '#####', '   # ', '   # '],
+  5: ['#####', '#    ', '#### ', '    #', '    #', '#   #', ' ### '],
+  6: ['  ## ', ' #   ', '#    ', '#### ', '#   #', '#   #', ' ### '],
+  7: ['#####', '    #', '   # ', '  #  ', ' #   ', ' #   ', ' #   '],
+  8: [' ### ', '#   #', '#   #', ' ### ', '#   #', '#   #', ' ### '],
+  9: [' ### ', '#   #', '#   #', ' ####', '    #', '   # ', ' ##  '],
+  '.': ['   ', '   ', '   ', '   ', '   ', ' ##', ' ##'],
+  ',': ['   ', '   ', '   ', '   ', ' ##', '  #', ' # '],
+  ':': ['   ', ' ##', ' ##', '   ', ' ##', ' ##', '   '],
+  ';': ['   ', ' ##', ' ##', '   ', ' ##', '  #', ' # '],
+  '!': [' #', ' #', ' #', ' #', ' #', '  ', ' #'],
+  '?': [' ### ', '#   #', '    #', '   # ', '  #  ', '     ', '  #  '],
+  '-': ['     ', '     ', '     ', '#####', '     ', '     ', '     '],
+  '+': ['     ', '  #  ', '  #  ', '#####', '  #  ', '  #  ', '     '],
+  '/': ['    #', '    #', '   # ', '  #  ', ' #   ', '#    ', '#    '],
+  '%': ['##   ', '##  #', '   # ', '  #  ', ' #   ', '#  ##', '   ##'],
+  '(': ['  #', ' # ', '#  ', '#  ', '#  ', ' # ', '  #'],
+  ')': ['#  ', ' # ', '  #', '  #', '  #', ' # ', '#  '],
+  '[': ['###', '#  ', '#  ', '#  ', '#  ', '#  ', '###'],
+  ']': ['###', '  #', '  #', '  #', '  #', '  #', '###'],
+  '#': [' # # ', ' # # ', '#####', ' # # ', '#####', ' # # ', ' # # '],
+  '=': ['     ', '     ', '#####', '     ', '#####', '     ', '     '],
+  '<': ['   #', '  # ', ' #  ', '#   ', ' #  ', '  # ', '   #'],
+  '>': ['#   ', ' #  ', '  # ', '   #', '  # ', ' #  ', '#   '],
+  '_': ['     ', '     ', '     ', '     ', '     ', '     ', '#####'],
+  "'": [' #', ' #', '# ', '  ', '  ', '  ', '  '],
+  '"': ['# #', '# #', '   ', '   ', '   ', '   ', '   '],
+  '*': ['     ', '# # #', ' ### ', '#####', ' ### ', '# # #', '     '],
+  '@': [' ### ', '#   #', '# ###', '# # #', '# ###', '#    ', ' ### '],
+  '&': [' ##  ', '#  # ', '# #  ', ' #   ', '# # #', '#  # ', ' ## #'],
+  '|': ['#', '#', '#', '#', '#', '#', '#'],
+  '$': ['  #  ', ' ####', '# #  ', ' ### ', '  # #', '#### ', '  #  '],
+  '~': ['     ', '     ', ' #   ', '# # #', '   # ', '     ', '     '],
+  '●': ['     ', ' ### ', '#####', '#####', '#####', ' ### ', '     '],
+  '▸': ['    ', '#   ', '##  ', '### ', '##  ', '#   ', '    '],
+  '◂': ['    ', '   #', '  ##', ' ###', '  ##', '   #', '    '],
+  '×': ['     ', '#   #', ' # # ', '  #  ', ' # # ', '#   #', '     '],
+  '…': ['     ', '     ', '     ', '     ', '     ', '     ', '# # #'],
+  '♪': ['  ## ', '  # #', '  #  ', '  #  ', '###  ', '###  ', '     '],
+  '·': ['  ', '  ', '  ', '##', '##', '  ', '  '],
+  '—': ['     ', '     ', '     ', '#####', '     ', '     ', '     '],
+  '∞': ['     ', '     ', ' # # ', '# # #', ' # # ', '     ', '     '],
+  '’': [' #', ' #', '# ', '  ', '  ', '  ', '  '],
+  ' ': ['   ', '   ', '   ', '   ', '   ', '   ', '   '],
+};
+
+// Precompute glyph bitmaps: {w, rows: [bitmask...]}
+const GLYPHS = {};
+for (const [ch, rows] of Object.entries(G)) {
+  const w = rows[0].length;
+  GLYPHS[ch] = { w, px: rows.map((r) => [...r].map((c) => c === '#')) };
+}
+const FALLBACK = GLYPHS['?'];
+
+export const FONT_H = 7;
+
+function glyph(ch) {
+  return GLYPHS[ch] || GLYPHS[ch.toUpperCase()] || FALLBACK;
+}
+
+/** Width in font pixels (1px letter spacing). */
+export function textWidth(str) {
+  let w = 0;
+  for (const ch of str) w += glyph(ch).w + 1;
+  return Math.max(0, w - 1);
+}
+
+/** Draw into a 2D context at integer scale (pixels are scale×scale squares). */
+export function drawText(ctx, str, x, y, color, scale = 1) {
+  ctx.fillStyle = color;
+  let cx = x;
+  for (const ch of str) {
+    const g = glyph(ch);
+    for (let r = 0; r < FONT_H; r++) {
+      const row = g.px[r];
+      for (let c = 0; c < g.w; c++) if (row[c]) ctx.fillRect(cx + c * scale, y + r * scale, scale, scale);
+    }
+    cx += (g.w + 1) * scale;
+  }
+  return cx - x;
+}
+
+/** Draw into a Uint32 RGBA buffer (scene renderer). */
+export function drawTextBuf(buf, W, H, str, x, y, color32, shadow32) {
+  let cx = x;
+  for (const ch of str) {
+    const g = glyph(ch);
+    for (let r = 0; r < FONT_H; r++) {
+      const row = g.px[r];
+      for (let c = 0; c < g.w; c++) {
+        if (!row[c]) continue;
+        const px = cx + c, py = y + r;
+        if (shadow32 !== undefined && px + 1 < W && py + 1 < H && px + 1 >= 0 && py + 1 >= 0) buf[(py + 1) * W + px + 1] = shadow32;
+        if (px >= 0 && px < W && py >= 0 && py < H) buf[py * W + px] = color32;
+      }
+    }
+    cx += g.w + 1;
+  }
+}
+
+/**
+ * Render text into a dedicated <canvas>, crisp at any devicePixelRatio:
+ * each font pixel is an integer number of device pixels.
+ */
+export function setPixelText(canvas, str, color, cssPx = 2) {
+  str = String(str);
+  if (canvas._text === str && canvas._color === color && canvas._css === cssPx) return;
+  canvas._text = str; canvas._color = color; canvas._css = cssPx;
+  const dpr = window.devicePixelRatio || 1;
+  const s = Math.max(1, Math.round(cssPx * dpr));
+  const w = textWidth(str) || 1;
+  canvas.width = w * s;
+  canvas.height = FONT_H * s;
+  canvas.style.width = (w * s) / dpr + 'px';
+  canvas.style.height = (FONT_H * s) / dpr + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawText(ctx, str, 0, 0, color, s);
+  canvas.setAttribute('aria-label', str);
+  canvas.setAttribute('role', 'img');
+}
+
+/** Replace every [data-px] element's text with a pixel-font canvas. */
+export function pixelizeHeadings(root = document) {
+  for (const el of root.querySelectorAll('[data-px]')) {
+    const text = el.textContent.trim();
+    const color = getComputedStyle(el).color;
+    const size = Number(el.dataset.px) || 2;
+    const c = document.createElement('canvas');
+    c.className = 'pxtext';
+    setPixelText(c, text.toUpperCase(), color, size);
+    el.textContent = '';
+    el.appendChild(c);
+  }
+}

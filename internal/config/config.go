@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -60,6 +61,11 @@ type API struct {
 	Prometheus bool   `json:"prometheus"`
 }
 
+// UI configures the embedded web interface.
+type UI struct {
+	Listen string `json:"listen"` // "" disables the UI
+}
+
 // Log configures logging.
 type Log struct {
 	Level  string `json:"level"`
@@ -74,6 +80,7 @@ type Config struct {
 	Stratum Stratum `json:"stratum"`
 	Vardiff Vardiff `json:"vardiff"`
 	API     API     `json:"api"`
+	UI      UI      `json:"ui"`
 	Log     Log     `json:"log"`
 	DataDir string  `json:"data_dir"`
 }
@@ -87,12 +94,13 @@ func Default() Config {
 			Mode: "fixed", CoinbaseTag: "/wizard-blocks/",
 		},
 		Stratum: Stratum{
-			Listen: "0.0.0.0:3333", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
+			Listen: "0.0.0.0:420", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
 			MaxConnections: 1024, MaxConnsPerIP: 64, AuthTimeoutS: 60, IdleTimeoutS: 600,
 			MaxLineBytes: 16384, MsgRatePerS: 100, MsgBurst: 500,
 		},
 		Vardiff: Vardiff{Initial: 1024, Min: 1, Max: 1e15, TargetShareS: 10, RetargetS: 60, VariancePct: 30},
 		API:     API{Listen: "127.0.0.1:8080", Prometheus: true},
+		UI:      UI{Listen: "0.0.0.0:8420"},
 		Log:     Log{Level: "info", Format: "json"},
 	}
 }
@@ -125,7 +133,7 @@ func (c *Config) applyEnv(env func(string) string) error {
 		"WB_PAYOUT_ADDRESS": &c.Payout.Address, "WB_COINBASE_TAG": &c.Payout.CoinbaseTag,
 		"WB_STRATUM_LISTEN": &c.Stratum.Listen, "WB_VERSION_ROLLING_MASK": &c.Stratum.VersionRollingMask,
 		"WB_API_LISTEN": &c.API.Listen, "WB_LOG_LEVEL": &c.Log.Level, "WB_LOG_FORMAT": &c.Log.Format,
-		"WB_DATA_DIR": &c.DataDir,
+		"WB_DATA_DIR": &c.DataDir, "WB_UI_LISTEN": &c.UI.Listen,
 	}
 	for k, p := range str {
 		if v, ok := lookup(env, k); ok {
@@ -175,6 +183,13 @@ func lookup(env func(string) string, k string) (string, bool) {
 	}
 	v := env(k)
 	return v, v != ""
+}
+
+// StratumPort returns the port of Stratum.Listen.
+func (c *Config) StratumPort() int {
+	_, p, _ := net.SplitHostPort(c.Stratum.Listen)
+	n, _ := strconv.Atoi(p)
+	return n
 }
 
 // VersionMask parses Stratum.VersionRollingMask.
@@ -248,6 +263,14 @@ func (c *Config) Validate() error {
 	}
 	if v.TargetShareS <= 0 || v.RetargetS <= 0 || v.VariancePct < 0 {
 		add("vardiff target_share_s/retarget_s must be positive")
+	}
+	for name, addr := range map[string]string{"stratum.listen": c.Stratum.Listen, "api.listen": c.API.Listen, "ui.listen": c.UI.Listen} {
+		if addr == "" && name == "ui.listen" {
+			continue
+		}
+		if _, port, err := net.SplitHostPort(addr); err != nil || port == "" {
+			add("%s must be host:port, got %q", name, addr)
+		}
 	}
 	return errors.Join(errs...)
 }

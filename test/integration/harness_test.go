@@ -160,6 +160,7 @@ func engineConfig(n *Node, coin string) config.Config {
 	c.Payout.CoinbaseTag = "/wizard-blocks-it/"
 	c.Stratum.Listen = "127.0.0.1:0"
 	c.API.Listen = "127.0.0.1:0"
+	c.UI.Listen = "127.0.0.1:0"
 	c.Vardiff.Min = 1e-12
 	c.Vardiff.Initial = 1
 	c.Stratum.MsgRatePerS = 2000
