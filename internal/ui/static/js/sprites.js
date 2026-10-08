@@ -73,18 +73,34 @@ export const CREATURE_HORNS = [
   '..K......K..',
   '.KYK....KYK.',
 ];
-export const CREATURE_COLORS = [
-  0x8a8f99, // Cave Mite
-  0x9be564, // Glow Worm
-  0x4fd1c5, // Crystal Beetle
-  0x7f6bd6, // Rock Bat
-  0xd96bcf, // Fungus Imp
-  0x3f4a8a, // Shadow Goblin
-  0x6b8e4e, // Mine Troll
-  0xff6a2a, // Lava Golem
-  0xc0392b, // Ancient Wyrm
-  0xffd166, // Block Dragon
+// Legendary tier: the dragon (20 x 14, facing left). R = rainbow wing.
+export const DRAGON = [
+  '..........KK....KK..',
+  '.........KRRK..KRRK.',
+  '..KK....KRRRRKKRRRRK',
+  '.KYK...KRRRRRRRRRRK.',
+  'KCCCK..KRRRRRRRRK...',
+  'KCWKCK..KRRRRRRK....',
+  'KCCCCCKKKCCCCCK.....',
+  '.KccCCCCCCCCCCCK....',
+  '..KKKcCCCCCCCCCCK...',
+  '.....KcccCCCCCCCCKK.',
+  '......KcccccCCCCCCCK',
+  '.......KCK...KCK.KK.',
+  '.......KCK...KCK....',
+  '......KKK...KKK.....',
 ];
+
+// One colour per rarity tier (index = tier).
+export const CREATURE_COLORS = [
+  0x8a8f99, // Common: Cave Mite
+  0x7f6bd6, // Uncommon: Rock Bat
+  0x3f4a8a, // Rare: Shadow Goblin
+  0xff6a2a, // Epic: Lava Golem
+  0xc0392b, // Legendary: the dragon
+];
+export const LEGENDARY = 4;
+export const BLOCK_TIER = 5;
 
 // Trophy gem (7 x 7), G = gem (rainbow), g = gem shade, Y = gold rim.
 export const TROPHY = [

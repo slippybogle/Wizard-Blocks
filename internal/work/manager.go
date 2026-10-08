@@ -85,6 +85,7 @@ type Manager struct {
 	kick      chan struct{}
 	submitWG  sync.WaitGroup
 	submitted sync.Map // block hash -> struct{}
+	announced sync.Map // block hash -> struct{}: "BLOCK ACCEPTED" logged
 	ready     chan struct{}
 	readyOnce sync.Once
 }
@@ -456,8 +457,11 @@ func (m *Manager) submit(c Candidate, hash bitcoin.Hash, block []byte) {
 	rec.Status = status
 	m.st.BlockSubmitted(rec)
 	if status == "accepted" {
-		m.log.Log(context.Background(), logging.LevelBlock, "*** BLOCK ACCEPTED — on active chain ***",
-			"height", t.Height, "hash", rec.Hash, "worker", c.Worker, "payout", c.Job.PayoutAddr, "reward_sats", t.CoinbaseValue)
+		// Announce each block exactly once, whatever path reached here.
+		if _, dup := m.announced.LoadOrStore(hash, struct{}{}); !dup {
+			m.log.Log(context.Background(), logging.LevelBlock, "*** BLOCK ACCEPTED — on active chain ***",
+				"height", t.Height, "hash", rec.Hash, "worker", c.Worker, "payout", c.Job.PayoutAddr, "reward_sats", t.CoinbaseValue)
+		}
 	} else {
 		m.log.Error("block not on active chain", "height", t.Height, "hash", rec.Hash, "status", status,
 			"reason", strings.TrimSpace(rec.Reason))

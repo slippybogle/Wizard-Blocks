@@ -214,10 +214,72 @@ func TestStaticAndState(t *testing.T) {
 }
 
 func TestCreatureTiers(t *testing.T) {
-	cases := map[float64]string{1e-7: "Cave Mite", 5e-4: "Rock Bat", 0.5: "Mine Troll", 99: "Ancient Wyrm", 100: "Block Dragon", 4e8: "Block Dragon"}
-	for pct, want := range cases {
-		if _, got := creatureFor(pct); got != want {
-			t.Errorf("%g%%: %s want %s", pct, got, want)
+	cases := []struct {
+		pct    float64
+		tier   int
+		rarity string
+	}{
+		{0, 0, "Common"}, {49.999, 0, "Common"},
+		{50, 1, "Uncommon"}, {63.299, 1, "Uncommon"},
+		{63.3, 2, "Rare"}, {76.699, 2, "Rare"},
+		{76.7, 3, "Epic"}, {89.999, 3, "Epic"},
+		{90, 4, "Legendary"}, {99.9999, 4, "Legendary"},
+		{100, BlockTier, "Block"}, {4e8, BlockTier, "Block"},
+	}
+	for _, c := range cases {
+		tier, rarity, name := creatureFor(c.pct)
+		if tier != c.tier || rarity != c.rarity {
+			t.Errorf("%g%%: tier %d %s (%s), want %d %s", c.pct, tier, rarity, name, c.tier, c.rarity)
 		}
+	}
+	if _, _, name := creatureFor(95); name != "Legendary Dragon" {
+		t.Errorf("Legendary creature is %q", name)
+	}
+}
+
+func TestRoundViewsTierFromNetworkPct(t *testing.T) {
+	s, _, _ := startUI(t, "")
+	s.st.SetTemplate(func(ti *stats.TemplateInfo) { ti.Height, ti.PrevHash, ti.NetworkDiff = 10, "aa", 1000 })
+	if r := s.BuildState(10, 10).Rounds[0]; !r.Current || r.Tier != 0 || r.Rarity != "Common" || r.PctOfNetwork != 0 {
+		t.Fatalf("new job without shares: %+v", r)
+	}
+	s.st.ShareAccepted("w", 1, 700, "x") // 70% of network difficulty
+	if r := s.BuildState(10, 10).Rounds[0]; r.Rarity != "Rare" || r.PctOfNetwork != 70 {
+		t.Fatalf("70%% job: %+v", r)
+	}
+	s.st.ShareAccepted("w", 1, 950, "x") // 95%
+	if r := s.BuildState(10, 10).Rounds[0]; r.Rarity != "Legendary" || r.Creature != "Legendary Dragon" {
+		t.Fatalf("95%% job: %+v", r)
+	}
+	s.st.ShareAccepted("w", 1, 1000, "x") // 100%, but no block record
+	if r := s.BuildState(10, 10).Rounds[0]; r.Tier != BlockTier || r.Creature != "Block (not accepted)" {
+		t.Fatalf("100%% job without block: %+v", r)
+	}
+	s.st.BlockSubmitted(stats.BlockRecord{Height: 10, Hash: "bb", Status: "accepted"})
+	if r := s.BuildState(10, 10).Rounds[0]; r.Creature != "Block found!" {
+		t.Fatalf("100%% job with accepted block: %+v", r)
+	}
+	if d := s.BuildState(10, 10).Derived; d.BestThisJobPct != 100 {
+		t.Fatalf("best_this_job_pct %v", d.BestThisJobPct)
+	}
+}
+
+func TestManaLuck(t *testing.T) {
+	s, _, _ := startUI(t, "")
+	if s.BuildState(1, 1).Derived.LuckPct != nil {
+		t.Fatal("luck before any share")
+	}
+	s.st.ShareAccepted("w", 10, 1000, "x") // exp(-10/1000) = 99.005%
+	l := s.BuildState(1, 1).Derived.LuckPct
+	if l == nil || *l < 99 || *l > 99.01 {
+		t.Fatalf("luck %v", l)
+	}
+	s.st.SetTemplate(func(ti *stats.TemplateInfo) { ti.PrevHash = "next-job" })
+	if l2 := s.BuildState(1, 1).Derived.LuckPct; l2 == nil || *l2 != *l {
+		t.Fatal("luck changed on a new job")
+	}
+	s.st.BlockSubmitted(stats.BlockRecord{Hash: "x", Status: "accepted"})
+	if s.BuildState(1, 1).Derived.LuckPct != nil {
+		t.Fatal("luck not reset by a found block")
 	}
 }

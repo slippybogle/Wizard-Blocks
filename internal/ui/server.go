@@ -270,9 +270,12 @@ type RoundView struct {
 	// LuckPct is the percentage of equally-sized rounds whose best share
 	// would be lower: P(best < D) = exp(-S/D), S = total credited share
 	// difficulty (each hash beats difficulty D with probability 1/(D*2^32)).
-	LuckPct  *float64 `json:"luck_percentile"`
-	Tier     int      `json:"tier"`
-	Creature string   `json:"creature"`
+	LuckPct *float64 `json:"luck_percentile"`
+	// Tier from PctOfNetwork: 0 Common <50, 1 Uncommon <63.3, 2 Rare <76.7,
+	// 3 Epic <90, 4 Legendary <100, 5 Block >=100.
+	Tier     int    `json:"tier"`
+	Rarity   string `json:"rarity"`
+	Creature string `json:"creature"`
 }
 
 // State is the document sent to the UI.
@@ -304,7 +307,11 @@ type Derived struct {
 	OddsWeek        float64  `json:"odds_week"`
 	OddsYear        float64  `json:"odds_year"`
 	StaleShares     uint64   `json:"stale_shares"`
-	WorkersTotal    int      `json:"workers_total"`
+	// LuckPct (MANA bar): luck percentile of all shares since our last found
+	// block, exp(-S/D)*100; nil until there is a share. Resets only on a
+	// found block, not on new jobs.
+	LuckPct      *float64 `json:"luck_since_last_block_pct"`
+	WorkersTotal int      `json:"workers_total"`
 }
 
 // StratumInfo tells miners how to connect.
@@ -376,6 +383,10 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 	st.Derived.OddsWeek = odds(hr, nd, 7*86400)
 	st.Derived.OddsYear = odds(hr, nd, 365*86400)
 	st.Derived.StaleShares = snap.Pool.Rejects["stale"]
+	if l := snap.Pool.Luck; l.BestDiff > 0 && l.SumDiff > 0 {
+		v := math.Exp(-l.SumDiff/l.BestDiff) * 100
+		st.Derived.LuckPct = &v
+	}
 	st.Derived.WorkersTotal = len(snap.Workers)
 
 	// Blocks, newest first.
@@ -408,6 +419,12 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 	}
 
 	st.Rounds = []RoundView{}
+	blockAt := map[int64]bool{}
+	for _, b := range snap.Blocks {
+		if b.Status == "accepted" || b.Status == "pending" {
+			blockAt[b.Height] = true
+		}
+	}
 	for i, r := range s.st.Rounds(maxRounds) {
 		v := RoundView{Round: r, Current: i == 0 && r.End.IsZero()}
 		if r.NetworkDiff > 0 {
@@ -417,9 +434,11 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 			l := math.Exp(-r.SumDiff/r.BestDiff) * 100
 			v.LuckPct = &l
 		}
-		v.Tier, v.Creature = creatureFor(v.PctOfNetwork)
-		if r.BestDiff == 0 {
-			v.Tier, v.Creature = -1, "nothing yet"
+		v.Tier, v.Rarity, v.Creature = creatureFor(v.PctOfNetwork)
+		if v.Tier == BlockTier && !blockAt[r.Height] {
+			// Reached the network target, but no block from this job is (or is
+			// becoming) part of the chain: not a real found block.
+			v.Creature = "Block (not accepted)"
 		}
 		if v.Current {
 			st.Derived.BestThisJob, st.Derived.BestThisJobPct = r.BestDiff, v.PctOfNetwork

@@ -3,9 +3,9 @@
 
 import {
   WIZARD_KEYS, WIZARD_BODY, WIZARD_BLINK_ROW, WIZARD_LEGS, SHOULDER,
-  CREATURE, CREATURE_HORNS, CREATURE_COLORS, BUBBLE_Q, MINECART,
+  CREATURE, CREATURE_HORNS, CREATURE_COLORS, DRAGON, LEGENDARY, BUBBLE_Q, MINECART,
 } from './sprites.js';
-import { drawTextBuf } from './font.js';
+import { drawTextBuf, textWidth } from './font.js';
 
 // ---------- colour helpers ----------
 
@@ -101,9 +101,15 @@ export class Scene {
   addSwings(n) { this.swingQueue = Math.min(6, this.swingQueue + n); }
   setPending(p) { this.pending = p; }
   setSleeping(s) { this.sleeping = s; }
-  celebrate() { this.celebrateT = 8; this.flashT = 0.35; }
+  celebrate() { this.celebrateT = 8; this.flashT = 0.35; this.congrats = { t: 0, life: 9 }; }
   setBottomInset(cssPx) { if (cssPx !== this.bottomInsetCss) { this.bottomInsetCss = cssPx; this.resize(); } }
-  showCreature(tier, name) { this.creature = { tier, name, t: 0, life: 6 }; }
+  // The current job's creature stays in the mine until the job ends.
+  showCreature(tier, name, respawn = false) {
+    if (!respawn && this.creature && !this.creature.leaving && this.creature.tier === tier) return;
+    this.creature = { tier, name, t: 0, leaving: false, leaveT: 0 }; // name shows briefly; the HUD keeps it
+  }
+  setCreatureName(name) { if (this.creature && !this.creature.leaving) this.creature.name = name; }
+  hideCreature() { if (this.creature) this.creature.leaving = true; }
 
   start() {
     if (this.running) return;
@@ -121,7 +127,7 @@ export class Scene {
     const devW = Math.max(1, Math.round(parent.clientWidth * dpr));
     const devH = Math.max(1, Math.round(parent.clientHeight * dpr));
     // Integer scale: aim for ~150-260 logical px vertically, >= 200 wide.
-    const scale = Math.max(1, Math.floor(Math.min(devH / 150, devW / 200)));
+    const scale = Math.max(1, Math.floor(Math.min(devH / 128, devW / 200)));
     const W = Math.ceil(devW / scale), H = Math.min(BG_H, Math.ceil(devH / scale));
     if (W === this.W && H === this.H && scale === this.scale && this.bottomInsetCss === this._inset) return;
     this._inset = this.bottomInsetCss;
@@ -417,7 +423,11 @@ export class Scene {
     if (this.particles.length > 500) this.particles.splice(0, this.particles.length - 500);
     for (const z of this.zzz) z.t += dt;
     this.zzz = this.zzz.filter((z) => z.t < 3);
-    if (this.creature) { this.creature.t += dt; if (this.creature.t > this.creature.life) this.creature = null; }
+    if (this.creature) {
+      this.creature.t += dt;
+      if (this.creature.leaving && (this.creature.leaveT += dt) > 0.6) this.creature = null;
+    }
+    if (this.congrats && (this.congrats.t += dt) > this.congrats.life) this.congrats = null;
     if (this.flashT > 0) this.flashT -= dt;
     for (const m of this.mist) { m.x += m.v * dt; }
   }
@@ -526,6 +536,7 @@ export class Scene {
     this.drawWizard();
     this.drawParticles();
     this.drawCreature();
+    this.drawCongrats();
     if (this.flashT > 0) this.flash(this.flashT / 0.35);
     this.ctx.putImageData(this.img, 0, 0);
   }
@@ -678,27 +689,56 @@ export class Scene {
 
   drawCreature() {
     const cr = this.creature;
-    if (!cr) return;
-    const tier = Math.max(0, Math.min(9, cr.tier));
-    const scale = tier >= 9 ? 3 : tier >= 5 ? 2 : 1;
+    if (!cr || cr.tier < 0 || cr.tier > LEGENDARY) return;
+    const tier = cr.tier;
+    const dragon = tier === LEGENDARY;
+    const scale = dragon || tier >= 2 ? 2 : 1;
     const base = CREATURE_COLORS[tier];
     const C = hex32(base), c = hex32(((base >> 1) & 0x7f7f7f));
-    const rows = tier >= 6 ? [...CREATURE_HORNS, ...CREATURE] : CREATURE;
-    const enter = Math.min(1, cr.t / 0.6), leave = Math.min(1, (cr.life - cr.t) / 0.6);
-    const hop = Math.abs(Math.sin(cr.t * 5)) * 4;
+    const rows = dragon ? DRAGON : tier >= 3 ? [...CREATURE_HORNS, ...CREATURE] : CREATURE;
+    const enter = Math.min(1, cr.t / 0.6), leave = cr.leaving ? Math.min(1, cr.leaveT / 0.6) : 0;
+    const hop = Math.abs(Math.sin(cr.t * (dragon ? 3 : 5))) * (dragon ? 6 : 4);
     const w = rows[0].length * scale, h = rows.length * scale;
-    const x0 = Math.round(this.W * 0.7 - w / 2 + (1 - enter) * 60 + (1 - leave) * 60);
+    const x0 = Math.round(this.W * 0.76 - w / 2 + (1 - enter) * 60 + leave * 80);
     const y0 = Math.round(this.floorY + 12 - h - hop);
-    const colorOf = (ch) => ({ K: this.keys.K, C, c, W: this.white, Y: this.gold[0] })[ch];
+    const colorOf = (ch, x, y) => ({ K: this.keys.K, C, c, W: this.white, Y: this.gold[0], R: this.pal[RAIN + ((x + y) & 15)] })[ch];
     for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[0].length; x++) {
       const ch = rows[y][x];
       if (ch === '.') continue;
-      const col = colorOf(ch);
+      const col = colorOf(ch, x, y);
       for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) this.px(x0 + x * scale + sx, y0 + y * scale + sy, col);
     }
+    if (cr.t > 3) return; // label only right after it appears or evolves
     const label = cr.name.toUpperCase();
-    const lw = label.length * 6;
-    drawTextBuf(this.buf, this.W, this.H, label, Math.round(x0 + w / 2 - lw / 2), y0 - 11, this.white, this.keys.K);
+    const lw = textWidth(label);
+    const lx = Math.max(2, Math.min(this.W - lw - 2, Math.round(x0 + w / 2 - lw / 2)));
+    drawTextBuf(this.buf, this.W, this.H, label, lx, y0 - 11, this.white, this.keys.K);
+  }
+
+  // Confirmed block: a small rainbow with "CONGRATULATIONS WIZARD!".
+  drawCongrats() {
+    const cg = this.congrats;
+    if (!cg) return;
+    const g = this.pose();
+    const cx = g.ox + 8, top = Math.max(14, g.oy - 30);
+    const grow = Math.min(1, cg.t / 0.8);
+    for (let band = 0; band < 6; band++) {
+      const r = Math.round((12 - band) * grow) + 4;
+      const col = this.pal[RAIN + ((band * 2 + Math.floor(this.t * 12)) & 15)];
+      for (let a = 0; a <= 64; a++) {
+        const th = Math.PI + (a / 64) * Math.PI;
+        this.px(cx + Math.cos(th) * r, top + 20 + Math.sin(th) * r, col);
+      }
+    }
+    const text = 'CONGRATULATIONS WIZARD!';
+    const tw = textWidth(text);
+    let x = Math.max(2, Math.min(this.W - tw - 2, cx - Math.round(tw / 2)));
+    const y = top - 2 + Math.round(Math.sin(cg.t * 4) * 1.5);
+    [...text].forEach((ch, i) => {
+      const col = this.pal[RAIN + ((i + Math.floor(this.t * 16)) & 15)];
+      drawTextBuf(this.buf, this.W, this.H, ch, x, y, col, this.keys.K);
+      x += textWidth(ch) + 1;
+    });
   }
 
   flash(a) {

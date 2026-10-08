@@ -14,7 +14,7 @@
     "coinbase_tag": "/wizard-blocks/"
   },
   "stratum": {
-    "listen": "0.0.0.0:3333",
+    "listen": "0.0.0.0:1776",
     "extranonce2_size": 8,
     "version_rolling_mask": "1fffe000"
   },
@@ -24,9 +24,11 @@
     "max": 1e15,
     "target_share_s": 10,
     "retarget_s": 60,
-    "variance_pct": 30
+    "variance_pct": 30,
+    "fixed_diff": 0
   },
   "api": { "listen": "127.0.0.1:8080", "prometheus": true },
+  "ui": { "listen": "0.0.0.0:8420", "admin_password": "change-me-too" },
   "log": { "level": "info", "format": "json" },
   "data_dir": "/data"
 }

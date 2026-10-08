@@ -3,11 +3,11 @@ import { Sound } from './audio.js';
 import { PixelChart } from './chart.js';
 import { SettingsPanel } from './settings.js';
 import { setPixelText, pixelizeHeadings } from './font.js';
-import { blockEvents, shareDelta, finishedRound } from './events.js';
+import { blockEvents, shareDelta } from './events.js';
 import {
   fmtHash, fmtDiff, fmtInt, fmtDur, fmtAgo, fmtPct, fmtBytes, fmtCoin, shortHash, maskAddress, fmtTime,
 } from './format.js';
-import { CREATURE, CREATURE_COLORS, TROPHY } from './sprites.js';
+import { CREATURE, CREATURE_COLORS, DRAGON, TROPHY, LEGENDARY, BLOCK_TIER } from './sprites.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const C = { ink: '#ece8ff', ink2: '#b4acdc', ink3: '#8a83b4', mint: '#5ee6c0', gold: '#ffd166', amber: '#ffb347', red: '#ff7a7a' };
@@ -40,10 +40,13 @@ function spriteCanvas(rows, colorOf, cssPx = 2) {
 const hexCss = (n) => '#' + n.toString(16).padStart(6, '0');
 function creatureIcon(tier, cssPx = 1.5) {
   if (tier < 0) { const c = document.createElement('canvas'); c.width = c.height = 1; return c; }
-  const base = CREATURE_COLORS[Math.min(9, tier)];
+  if (tier >= BLOCK_TIER) return trophyIcon(0); // the job found a block
+  const base = CREATURE_COLORS[tier];
   const shade = (base >> 1) & 0x7f7f7f;
-  return spriteCanvas(CREATURE, (ch) => ({ K: '#120c1c', C: hexCss(base), c: hexCss(shade), W: '#ffffff' })[ch], cssPx);
+  const rows = tier === LEGENDARY ? DRAGON : CREATURE;
+  return spriteCanvas(rows, (ch, x, y) => ({ K: '#120c1c', C: hexCss(base), c: hexCss(shade), W: '#ffffff', Y: C.gold, R: RAINBOW[(x + y) % RAINBOW.length] })[ch], tier === LEGENDARY ? 1 : cssPx);
 }
+const RARITY_COLOR = { Common: '#b4acdc', Uncommon: '#7ee081', Rare: '#6b8cff', Epic: '#c77dff', Legendary: '#ffd166' };
 const RAINBOW = ['#ff5f6d', '#ffa34d', '#ffe066', '#7ee081', '#4fd1c5', '#6b8cff', '#b06bff'];
 function trophyIcon(seed) {
   return spriteCanvas(TROPHY, (ch, x, y) => {
@@ -108,7 +111,47 @@ function buildHUD() {
   stat(r5, 'bestAll', 'BEST ALL-TIME', { color: C.gold, short: 'ALL-TIME' });
   const r6 = row(l);
   stat(r6, 'found', 'BLOCKS FOUND', { color: C.gold, short: 'BLOCKS' });
-  stat(r6, 'creature', 'THIS JOB\u2019S BEAST', { short: 'BEAST' });
+  stat(r6, 'creature', 'THIS JOB\u2019S BEAST', { short: 'BEAST' }).classList.add('wide');
+  // MANA: luck percentile since our last found block (resets only on a find).
+  const mana = document.createElement('div');
+  mana.className = 'stat wide mana';
+  mana.innerHTML = '<div class="lab"><canvas class="pxtext"></canvas></div><div class="mana-row"><canvas class="mana-bar"></canvas><canvas class="pxtext"></canvas></div>';
+  l.append(mana);
+  const [lc, bar, vc] = mana.querySelectorAll('canvas');
+  hud.mana = { lc, bar, vc };
+}
+
+// Pixel-art mana bar: 48 cells, frame, glowing gradient fill with sparkles.
+const MANA_STOPS = ['#1b2a8f', '#2b4cff', '#39a0ff', '#39d0ff', '#8f7dff', '#c77dff'];
+function drawMana(canvas, pct) {
+  const cells = 48, rows = 7;
+  const dpr = window.devicePixelRatio || 1;
+  const s = Math.max(1, Math.round((narrow() ? 2 : 3) * dpr));
+  const W = cells + 4, H = rows + 4;
+  if (canvas.width !== W * s) {
+    canvas.width = W * s; canvas.height = H * s;
+    canvas.style.width = (W * s) / dpr + 'px'; canvas.style.height = (H * s) / dpr + 'px';
+  }
+  const ctx = canvas.getContext('2d');
+  const px = (x, y, c) => { ctx.fillStyle = c; ctx.fillRect(x * s, y * s, s, s); };
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Frame: dark outline, inner bevel.
+  for (let x = 1; x < W - 1; x++) { px(x, 0, '#120c1c'); px(x, H - 1, '#120c1c'); px(x, 1, '#4b3f8a'); px(x, H - 2, '#2a2050'); }
+  for (let y = 1; y < H - 1; y++) { px(0, y, '#120c1c'); px(W - 1, y, '#120c1c'); px(1, y, '#4b3f8a'); px(W - 2, y, '#2a2050'); }
+  for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) px(x, y, (x + y) % 2 ? '#0b0a14' : '#100d1f');
+  const fill = Math.round((Math.max(0, Math.min(100, pct || 0)) / 100) * cells);
+  const t = Date.now() / 120;
+  for (let i = 0; i < fill; i++) {
+    const stop = MANA_STOPS[Math.min(MANA_STOPS.length - 1, Math.floor((i / cells) * MANA_STOPS.length))];
+    for (let r = 0; r < rows; r++) {
+      let c = stop;
+      if (r === 0) c = '#bfe6ff';            // top highlight
+      else if (r === rows - 1) c = '#141c5c'; // bottom shade
+      else if ((i * 7 + r * 3 + Math.floor(t)) % 23 === 0) c = '#ffffff'; // sparkle
+      px(2 + i, 2 + r, c);
+    }
+  }
+  if (fill > 0 && fill < cells) for (let r = 1; r < rows - 1; r++) px(2 + fill, 2 + r, '#e8f6ff'); // bright leading edge
 }
 
 function setStat(key, value, color) {
@@ -142,11 +185,19 @@ function renderHUD(st) {
   setStat('node', nodeTxt, nodeCol);
   setStat('netdiff', fmtDiff(t.network_difficulty));
   setStat('eta', d.expected_time_to_block_s == null ? 'NO HASHRATE' : fmtDur(d.expected_time_to_block_s));
-  setStat('bestJob', fmtDiff(d.best_this_job));
+  // Best share of the current job; until it has one, show the last job's.
+  const lastJob = st.rounds.find((r) => !r.current);
+  if (d.best_this_job > 0 || !lastJob) setStat('bestJob', fmtDiff(d.best_this_job));
+  else setStat('bestJob', `${fmtDiff(lastJob.best_difficulty)} LAST JOB`, C.ink3);
   setStat('bestAll', fmtDiff(p.best_share_difficulty));
   setStat('found', String(p.blocks_found));
   const cur = st.rounds.find((r) => r.current);
-  setStat('creature', cur && cur.tier >= 0 ? cur.creature : '—', C.ink2);
+  setStat('creature', cur && cur.tier >= 0 && cur.tier <= LEGENDARY ? `${cur.creature} ${fmtPct(cur.pct_of_network, 3)}` : '—',
+    RARITY_COLOR[cur?.rarity] || C.ink2);
+  const luck = d.luck_since_last_block_pct;
+  setPixelText(hud.mana.lc, narrow() ? 'MANA (LUCK)' : 'MANA · LUCK SINCE LAST BLOCK', C.ink3, narrow() ? 1 : 1.5);
+  setPixelText(hud.mana.vc, luck == null ? '—' : fmtPct(luck, 3), '#7fd8ff', narrow() ? 1.25 : 2);
+  drawMana(hud.mana.bar, luck);
 
   // Pending: neutral notice, never a celebration.
   const pill = $('#pending-pill');
@@ -157,7 +208,7 @@ function renderHUD(st) {
   // Trophy wall: confirmed blocks only.
   const wall = $('#hud-trophies');
   const confirmed = st.blocks.filter((b) => b.status === 'accepted' && b.chain_status !== 'orphaned');
-  const sig = confirmed.map((b) => b.hash + b.chain_status).join(',') + narrow();
+  const sig = confirmed.map((b) => b.hash + b.chain_status + b.confirmations).join(',') + narrow();
   if (wall._sig !== sig) {
     wall._sig = sig;
     wall.textContent = '';
@@ -171,7 +222,9 @@ function renderHUD(st) {
     confirmed.slice(0, max).forEach((b, i) => {
       const a = document.createElement('a');
       a.className = 'trophy'; a.href = '#/ledger'; a.title = `Block ${b.height}`;
-      a.append(trophyIcon(i), pxCanvas('#' + b.height, b.chain_status === 'matured' ? C.gold : C.ink2, 1.5));
+      a.title = `Block ${b.height}: ${confLabel(b, st.coin.coinbase_maturity)}`;
+      a.append(trophyIcon(i), pxCanvas('#' + b.height, b.chain_status === 'matured' ? C.gold : C.ink2, 1.5),
+        pxCanvas(b.chain_status === 'matured' ? 'MATURED' : `${Math.max(0, Math.min(b.confirmations, st.coin.coinbase_maturity))}/${st.coin.coinbase_maturity}`, C.ink3, 1));
       wall.append(a);
     });
     if (confirmed.length > max) wall.append(pxCanvas(`+${confirmed.length - max}`, C.ink3, 1.5));
@@ -276,7 +329,7 @@ function renderLedger(st) {
       <td class="num">${esc(fmtInt(r.shares))}</td><td>${esc(fmtDur(dur))}</td>`;
     const cell = $('.creature-cell', tr);
     cell.append(creatureIcon(r.tier));
-    cell.append(document.createTextNode(r.creature));
+    cell.append(document.createTextNode(r.tier > LEGENDARY ? r.creature : `${r.rarity} · ${r.creature}`));
     tbody.append(tr);
   }
 }
@@ -297,6 +350,34 @@ async function loadHistory() {
   } catch { chart.set([], 'HISTORY UNAVAILABLE'); }
 }
 
+// "3/100 confirmations" until the coinbase can be spent, then "matured".
+function confLabel(b, maturity) {
+  if (b.chain_status === 'matured') return 'matured';
+  if (b.chain_status === 'orphaned') return 'orphaned';
+  return `${Math.max(0, Math.min(b.confirmations, maturity))}/${maturity} confirmations`;
+}
+
+// Every job gets a creature as soon as it starts; its rarity follows the
+// job's best share as a % of network difficulty, and it leaves when the job
+// ends. A job that found a block gets the congratulations rainbow instead.
+let shownJob = null;
+function syncCreature(st) {
+  const cur = st.rounds.find((r) => r.current);
+  if (!cur) return;
+  if (cur.tier > LEGENDARY) { scene.hideCreature(); shownJob = null; return; }
+  const label = `${cur.creature} ${fmtPct(cur.pct_of_network, 3)}`;
+  if (!shownJob || shownJob.prev !== cur.prev_hash) {
+    scene.showCreature(cur.tier, label, true); // new job: a new creature
+    shownJob = { prev: cur.prev_hash, tier: cur.tier };
+  } else if (cur.tier !== shownJob.tier) {
+    scene.showCreature(cur.tier, label);
+    if (cur.tier > shownJob.tier) sound.creature(cur.tier);
+    shownJob.tier = cur.tier;
+  } else {
+    scene.setCreatureName(label);
+  }
+}
+
 // ---------- events from the engine ----------
 function onState(next) {
   lastMsg = Date.now();
@@ -311,29 +392,33 @@ function onState(next) {
     sound.fanfare();
     showBanner(ev.celebrate[0]);
   }
-  const done = finishedRound(prev, next);
-  if (done && done.tier >= 0) {
-    scene.showCreature(done.tier, done.creature);
-    sound.creature(done.tier);
-  }
+  syncCreature(next);
   scene.setHashrate(next.pool.hashrate_5m || next.pool.hashrate_1m);
   sound.setIntensity(scene.intensity);
   scene.setSleeping(!next.node.connected || !next.node.synced);
   state = next;
   prev = next;
   renderHUD(next);
+  if (bannerBlock) renderBanner();
   if (page === 'ledger') renderLedger(next);
 }
 
-let bannerTimer;
-function showBanner(b) {
+let bannerTimer, bannerBlock = null;
+function renderBanner() {
   const el = $('#banner');
   const [c1, c2] = el.querySelectorAll('canvas');
+  const b = (state?.blocks || []).find((x) => x.hash === bannerBlock) || null;
+  if (!b) return;
   setPixelText(c1, 'BLOCK FOUND!', C.gold, narrow() ? 3 : 4);
-  setPixelText(c2, `#${b.height} · ${fmtCoin(b.reward_sats, state?.coin?.ticker || '').toUpperCase()} · CONFIRMED`, C.ink, narrow() ? 1 : 1.5);
-  el.hidden = false;
+  const conf = confLabel(b, state.coin.coinbase_maturity).toUpperCase();
+  setPixelText(c2, `#${b.height} · ${fmtCoin(b.reward_sats, state.coin.ticker).toUpperCase()} · ${conf}`, C.ink, narrow() ? 1 : 1.5);
+}
+function showBanner(b) {
+  bannerBlock = b.hash;
+  renderBanner();
+  $('#banner').hidden = false;
   clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(() => { el.hidden = true; }, 9000);
+  bannerTimer = setTimeout(() => { $('#banner').hidden = true; bannerBlock = null; }, 9000);
 }
 
 function setLink(s) {

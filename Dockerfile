@@ -12,9 +12,10 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/wizard-blocks /usr/local/bin/wizard-blocks
 COPY --from=build --chown=65532:65532 /out/data /data
 USER nonroot:nonroot
-# Stratum, stats API
-EXPOSE 3333 8080
-ENV WB_STRATUM_LISTEN=0.0.0.0:3333 \
+# Stratum, web UI, stats API
+EXPOSE 1776 8420 8080
+ENV WB_STRATUM_LISTEN=0.0.0.0:1776 \
+    WB_UI_LISTEN=0.0.0.0:8420 \
     WB_API_LISTEN=0.0.0.0:8080 \
     WB_DATA_DIR=/data
 VOLUME ["/data"]

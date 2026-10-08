@@ -34,6 +34,7 @@ type Payout struct {
 // Stratum configures the miner-facing server.
 type Stratum struct {
 	Listen             string  `json:"listen"`
+	PublicPort         int     `json:"public_port"` // port miners connect to, if different (e.g. Docker host mapping); UI display only
 	Extranonce2Size    int     `json:"extranonce2_size"`
 	VersionRollingMask string  `json:"version_rolling_mask"`
 	MaxConnections     int     `json:"max_connections"`
@@ -97,7 +98,7 @@ func Default() Config {
 			Mode: "fixed", CoinbaseTag: "/wizard-blocks/",
 		},
 		Stratum: Stratum{
-			Listen: "0.0.0.0:420", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
+			Listen: "0.0.0.0:1776", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
 			MaxConnections: 1024, MaxConnsPerIP: 64, AuthTimeoutS: 60, IdleTimeoutS: 600,
 			MaxLineBytes: 16384, MsgRatePerS: 100, MsgBurst: 500,
 		},
@@ -146,7 +147,7 @@ func (c *Config) applyEnv(env func(string) string) error {
 	ints := map[string]*int{
 		"WB_POLL_INTERVAL_MS": &c.Node.PollIntervalMs, "WB_TEMPLATE_REFRESH_S": &c.Node.TemplateRefreshS,
 		"WB_EXTRANONCE2_SIZE": &c.Stratum.Extranonce2Size, "WB_MAX_CONNECTIONS": &c.Stratum.MaxConnections,
-		"WB_MAX_CONNECTIONS_PER_IP": &c.Stratum.MaxConnsPerIP,
+		"WB_MAX_CONNECTIONS_PER_IP": &c.Stratum.MaxConnsPerIP, "WB_STRATUM_PUBLIC_PORT": &c.Stratum.PublicPort,
 	}
 	for k, p := range ints {
 		if v, ok := lookup(env, k); ok {
@@ -198,8 +199,12 @@ func lookup(env func(string) string, k string) (string, bool) {
 	return v, v != ""
 }
 
-// StratumPort returns the port of Stratum.Listen.
+// StratumPort returns the port miners connect to: Stratum.PublicPort if
+// set, otherwise the port of Stratum.Listen.
 func (c *Config) StratumPort() int {
+	if c.Stratum.PublicPort > 0 {
+		return c.Stratum.PublicPort
+	}
 	_, p, _ := net.SplitHostPort(c.Stratum.Listen)
 	n, _ := strconv.Atoi(p)
 	return n
@@ -257,6 +262,9 @@ func (c *Config) Validate() error {
 		add("stratum.version_rolling_mask must be hex (e.g. 1fffe000)")
 	} else if uint32(v)&0xe0001fff != 0 {
 		add("stratum.version_rolling_mask may only contain BIP320 bits (subset of 1fffe000)")
+	}
+	if c.Stratum.PublicPort < 0 || c.Stratum.PublicPort > 65535 {
+		add("stratum.public_port must be 0..65535")
 	}
 	if c.Stratum.MaxConnections < 1 || c.Stratum.MaxConnsPerIP < 1 {
 		add("stratum connection limits must be positive")

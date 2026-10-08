@@ -25,9 +25,20 @@ services:
       WB_PAYOUT_ADDRESS: ${BCH_PAYOUT_ADDRESS:?set BCH_PAYOUT_ADDRESS}
       WB_COINBASE_TAG: /wizard-blocks/
       WB_LOG_FORMAT: json
+      # Difficulty (VARDIFF_* / FIXED_DIFF). FIXED_DIFF > 0 disables vardiff.
+      # Miners can pin their own difficulty with the password "d=<diff>".
+      WB_VARDIFF_MIN: ${VARDIFF_MIN:-1}
+      WB_VARDIFF_MAX: ${VARDIFF_MAX:-1000000000000000}
+      WB_VARDIFF_TARGET_SECONDS: ${VARDIFF_TARGET_SECONDS:-10}
+      WB_FIXED_DIFF: ${FIXED_DIFF:-0}
+      # Web UI. Settings page needs a password (empty = settings read-only).
+      WB_UI_ADMIN_PASSWORD: ${UI_ADMIN_PASSWORD:-}
+      WB_STRATUM_LISTEN: 0.0.0.0:1776            # inside the container
+      WB_STRATUM_PUBLIC_PORT: ${STRATUM_PORT:-1776}  # shown to miners in the UI
     ports:
-      - "3333:3333"                  # Stratum for miners on your LAN
-      - "127.0.0.1:8080:8080"        # stats JSON / Prometheus (local only)
+      - "${STRATUM_PORT:-1776}:1776"           # Stratum for miners on your LAN
+      - "${UI_PORT:-8420}:8420"                # web UI (The Mine / The Ledger)
+      - "127.0.0.1:8080:8080"                  # stats JSON / Prometheus (local only)
     volumes:
       - bch-data:/data
 
@@ -46,6 +57,8 @@ services:
       WB_ZMQ_HASHBLOCK: tcp://${APP_BITCOIN_NODE_IP}:${APP_BITCOIN_ZMQ_HASHBLOCK_PORT:-28334}
       WB_PAYOUT_MODE: fixed
       WB_PAYOUT_ADDRESS: ${BTC_PAYOUT_ADDRESS:?set BTC_PAYOUT_ADDRESS}
+      WB_STRATUM_LISTEN: 0.0.0.0:3333
+      WB_UI_LISTEN: ""                         # BCH-only UI for now
     ports:
       - "3334:3333"
       - "127.0.0.1:8081:8080"

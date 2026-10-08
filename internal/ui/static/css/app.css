@@ -192,3 +192,10 @@ input[aria-invalid="true"] { border-color: var(--red); }
 @media (max-width: 520px) { .ovr-row { grid-template-columns: 1fr 110px auto; } }
 .card { scroll-margin-top: calc(var(--top) + env(safe-area-inset-top) + 8px); }
 @media (max-width: 480px) { .brand { display: none; } .tabs { gap: 2px; } .toggles { gap: 4px; } }
+
+/* MANA bar (luck since last found block) */
+.mana-row { display: flex; align-items: center; gap: 10px; }
+.mana-bar { filter: drop-shadow(0 0 3px #39a0ffaa); animation: managlow 1.8s steps(6) infinite; }
+@keyframes managlow { 50% { filter: drop-shadow(0 0 7px #8f7dffdd); } }
+@media (max-width: 640px) { .stat.wide { grid-column: 1 / -1; } #hud-loot { grid-template-columns: repeat(3, auto); } }
+@media (prefers-reduced-motion: reduce) { .mana-bar { animation: none; } }

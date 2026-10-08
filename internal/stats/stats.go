@@ -148,6 +148,7 @@ type Collector struct {
 	blocks      []BlockRecord
 	connections int
 	persistPath string
+	luck        Luck
 	round       Round   // shares on the current block template (prevhash)
 	rounds      []Round // completed rounds, oldest first
 }
@@ -187,6 +188,17 @@ type persisted struct {
 	Blocks     []BlockRecord `json:"blocks"`
 	BestDiff   float64       `json:"best_share_difficulty"`
 	BestWorker string        `json:"best_share_worker"`
+	Luck       Luck          `json:"luck"`
+}
+
+// Luck accumulates shares since the last block we found (confirmed on the
+// active chain); it resets only then, not on new jobs. The UI turns it into
+// a luck percentile: P(best < BestDiff) = exp(-SumDiff / BestDiff).
+type Luck struct {
+	SumDiff  float64   `json:"sum_difficulty"`
+	BestDiff float64   `json:"best_difficulty"`
+	Shares   uint64    `json:"shares"`
+	Since    time.Time `json:"since"`
 }
 
 func (c *Collector) load() {
@@ -196,7 +208,7 @@ func (c *Collector) load() {
 	}
 	var p persisted
 	if json.Unmarshal(b, &p) == nil {
-		c.blocks, c.bestDiff, c.bestWorker = p.Blocks, p.BestDiff, p.BestWorker
+		c.blocks, c.bestDiff, c.bestWorker, c.luck = p.Blocks, p.BestDiff, p.BestWorker, p.Luck
 	}
 }
 
@@ -206,7 +218,7 @@ func (c *Collector) Save() error {
 		return nil
 	}
 	c.mu.Lock()
-	b, err := json.MarshalIndent(persisted{Blocks: c.blocks, BestDiff: c.bestDiff, BestWorker: c.bestWorker}, "", "  ")
+	b, err := json.MarshalIndent(persisted{Blocks: c.blocks, BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck}, "", "  ")
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -276,6 +288,14 @@ func (c *Collector) ShareAccepted(worker string, shareDiff, achieved float64, in
 	if achieved > c.bestDiff {
 		c.bestDiff, c.bestWorker = achieved, worker
 	}
+	if c.luck.Since.IsZero() {
+		c.luck.Since = now
+	}
+	c.luck.Shares++
+	c.luck.SumDiff += shareDiff
+	if achieved > c.luck.BestDiff {
+		c.luck.BestDiff = achieved
+	}
 	c.round.Shares++
 	c.round.SumDiff += shareDiff
 	if achieved > c.round.BestDiff {
@@ -341,11 +361,17 @@ func (c *Collector) BlockSubmitted(r BlockRecord) {
 	c.mu.Lock()
 	for i := range c.blocks {
 		if c.blocks[i].Hash == r.Hash {
+			if r.Status == "accepted" && c.blocks[i].Status != "accepted" {
+				c.luck = Luck{Since: time.Now()} // we found a block: luck starts over
+			}
 			c.blocks[i] = r
 			c.mu.Unlock()
 			_ = c.Save()
 			return
 		}
+	}
+	if r.Status == "accepted" {
+		c.luck = Luck{Since: time.Now()}
 	}
 	c.blocks = append(c.blocks, r)
 	if len(c.blocks) > 10000 {
@@ -408,6 +434,7 @@ type PoolSnapshot struct {
 	BestWorker    string            `json:"best_share_worker"`
 	BlocksFound   int               `json:"blocks_found"`   // confirmed on the active chain only
 	BlocksPending int               `json:"blocks_pending"` // submitted, awaiting confirmation
+	Luck          Luck              `json:"luck_since_last_block"`
 }
 
 // Snapshot is the full JSON document served at /stats.
@@ -435,7 +462,7 @@ func (c *Collector) Snapshot() Snapshot {
 			Hashrate5m:  c.pool.hashrate(now, 5*time.Minute),
 			Hashrate1h:  c.pool.hashrate(now, time.Hour),
 			Connections: c.connections, Accepted: c.accepted, Rejected: c.rejected,
-			Rejects: copyMap(c.rejects), BestDiff: c.bestDiff, BestWorker: c.bestWorker,
+			Rejects: copyMap(c.rejects), BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck,
 		},
 		Blocks: append([]BlockRecord{}, c.blocks...),
 	}

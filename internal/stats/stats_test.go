@@ -79,3 +79,33 @@ func TestRounds(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestLuckResetsOnlyOnFoundBlock(t *testing.T) {
+	dir := t.TempDir()
+	c := New("bch", "t", dir)
+	c.SetTemplate(func(ti *TemplateInfo) { ti.PrevHash = "a" })
+	c.ShareAccepted("w", 10, 500, "x")
+	c.SetTemplate(func(ti *TemplateInfo) { ti.PrevHash = "b" }) // new job: no reset
+	c.ShareAccepted("w", 10, 20, "x")
+	l := c.Snapshot().Pool.Luck
+	if l.SumDiff != 20 || l.BestDiff != 500 || l.Shares != 2 {
+		t.Fatalf("luck after new job: %+v", l)
+	}
+	c.BlockSubmitted(BlockRecord{Hash: "h", Status: "pending"}) // not yet found
+	if c.Snapshot().Pool.Luck.Shares != 2 {
+		t.Fatal("pending block reset luck")
+	}
+	if New("bch", "t", dir).Snapshot().Pool.Luck.Shares != 2 {
+		t.Fatal("luck not persisted")
+	}
+	c.BlockSubmitted(BlockRecord{Hash: "h", Status: "accepted"})
+	if l := c.Snapshot().Pool.Luck; l.Shares != 0 || l.SumDiff != 0 || l.Since.IsZero() {
+		t.Fatalf("luck after found block: %+v", l)
+	}
+	c.BlockSubmitted(BlockRecord{Hash: "o", Status: "orphaned"})
+	c.ShareAccepted("w", 10, 30, "x")
+	c.BlockSubmitted(BlockRecord{Hash: "o", Status: "orphaned"}) // not a found block
+	if c.Snapshot().Pool.Luck.Shares != 1 {
+		t.Fatal("orphaned block reset luck")
+	}
+}

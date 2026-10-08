@@ -42,29 +42,36 @@ var Coins = map[string]CoinInfo{
 	},
 }
 
-// Creature tiers for a job's best share, by percent of network difficulty
-// (one tier per decade; the last tier is a solved block).
+// Creature rarity from a job's best share difficulty as a percentage of the
+// current network difficulty: how close the job came to being a block.
+// Cutoffs (product spec, do not change), upper bounds exclusive:
+// Common <50, Uncommon 50-63.3, Rare 63.3-76.7, Epic 76.7-90,
+// Legendary 90-<100, Block >=100 (a real found block).
+// A creature spawns when a job starts (Common, 0%) and evolves as better
+// shares arrive. The dragon is the Legendary creature only.
 var creatures = []struct {
 	MaxPct float64
+	Rarity string
 	Name   string
 }{
-	{1e-6, "Cave Mite"},
-	{1e-5, "Glow Worm"},
-	{1e-4, "Crystal Beetle"},
-	{1e-3, "Rock Bat"},
-	{1e-2, "Fungus Imp"},
-	{1e-1, "Shadow Goblin"},
-	{1, "Mine Troll"},
-	{10, "Lava Golem"},
-	{100, "Ancient Wyrm"},
+	{50, "Common", "Cave Mite"},
+	{63.3, "Uncommon", "Rock Bat"},
+	{76.7, "Rare", "Shadow Goblin"},
+	{90, "Epic", "Lava Golem"},
+	{100, "Legendary", "Legendary Dragon"},
 }
 
-// creatureFor returns the tier index (0..9) and name for pct.
-func creatureFor(pct float64) (int, string) {
+// BlockTier is the tier of a job whose best share reached 100% of the
+// network difficulty.
+const BlockTier = 5
+
+// creatureFor returns the tier (0..5), rarity and creature name for the best
+// share's percentage of network difficulty.
+func creatureFor(pct float64) (int, string, string) {
 	for i, c := range creatures {
 		if pct < c.MaxPct {
-			return i, c.Name
+			return i, c.Rarity, c.Name
 		}
 	}
-	return len(creatures), "Block Dragon"
+	return BlockTier, "Block", "Block found!"
 }

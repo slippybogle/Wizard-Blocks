@@ -102,3 +102,18 @@ func TestDifficultyEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestStratumPorts(t *testing.T) {
+	c, err := Load("", env(map[string]string{"WB_RPC_USER": "u", "WB_PAYOUT_ADDRESS": "x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Stratum.Listen != "0.0.0.0:1776" || c.StratumPort() != 1776 {
+		t.Fatalf("default stratum %s / %d", c.Stratum.Listen, c.StratumPort())
+	}
+	c, err = Load("", env(map[string]string{"WB_RPC_USER": "u", "WB_PAYOUT_ADDRESS": "x",
+		"WB_STRATUM_LISTEN": "0.0.0.0:3333", "WB_STRATUM_PUBLIC_PORT": "3335"}))
+	if err != nil || c.StratumPort() != 3335 {
+		t.Fatalf("public port %d %v", c.StratumPort(), err)
+	}
+}
