@@ -47,9 +47,9 @@ The built-in CPU miner (independent cgminer-style header code that uses only
 
 | suite | blocks verified | highlights |
 |---|---|---|
-| **TestRegtestBCH** (priority) | **603** accepted (heights 2–606) | 5 subsidy eras (50 → 3.125 BCH); a 1000-tx mempool drained into our blocks (largest 578–1001 txs across runs); BCHN restarted under the running engine (sessions kept, RPC and ZMQ reconnected, 11 more blocks); 100 idle sessions all followed every tip while 4 miners raced (47 lost same-height races recorded `orphaned`/`stale`, none counted as found); 10 payout forms: CashAddr P2PKH, prefixless, UPPERCASE, legacy Base58 P2PKH, token-aware P2PKH, P2SH20, P2SH32, token-aware P2SH32, legacy Base58 P2SH32; empty coinbase tag with 22 coinbases padded to the 100-byte minimum |
-| TestRegtestBTC (testdummy bit 28 signalling inside the mask) | 215 accepted | 69 blocks on in-mask templates, split by miner mode (bip310 26 / xor 24 / or 19), each the exact header that miner hashed |
-| TestRegtestBTCNoSignal (`-vbparams=testdummy:-2:0`) | 212 accepted | every template `0x20000000`; all interpretations coincide (`bip310+xor+or`) |
+| **TestRegtestBCH** (priority) | **602** accepted (heights 2–605) | 5 subsidy eras (50 → 3.125 BCH); a 1000-tx mempool drained into our blocks (largest 578–1001 txs across runs); BCHN restarted under the running engine (sessions kept, RPC and ZMQ reconnected, 11 more blocks); 100 idle sessions all followed every tip while 4 miners raced (47 lost same-height races recorded `orphaned`/`stale`, none counted as found); 10 payout forms: CashAddr P2PKH, prefixless, UPPERCASE, legacy Base58 P2PKH, token-aware P2PKH, P2SH20, P2SH32, token-aware P2SH32, legacy Base58 P2SH32; empty coinbase tag with 22 coinbases padded to the 100-byte minimum |
+| TestRegtestBTC (testdummy bit 28 signalling inside the mask) | 213 accepted | 69 blocks on in-mask templates, split by miner mode (bip310 26 / xor 24 / or 19), each the exact header that miner hashed |
+| TestRegtestBTCNoSignal (`-vbparams=testdummy:-2:0`) | 213 accepted | every template `0x20000000`; all interpretations coincide (`bip310+xor+or`) |
 
 ### Scenarios in each suite
 
@@ -83,7 +83,8 @@ The built-in CPU miner (independent cgminer-style header code that uses only
   removed by reset.
 - **CreaturesAndLuck** (BCH): with FIXED_DIFF below network difficulty, shares
   that do not solve blocks give the current job a creature tier from its % of
-  network difficulty, and the luck-since-last-block percentage fills.
+  network difficulty, and the luck-since-last-block percentage fills
+  (latest run: 78 shares, Legendary at 98.99 %, luck 18.41 %).
 
 ## Testnet stack (`deploy/bch-testnet`)
 
