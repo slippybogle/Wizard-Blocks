@@ -29,19 +29,21 @@
 
 <main>
   <section id="page-mine" class="page" aria-label="The Mine">
-    <div class="scene-wrap"><canvas id="scene" aria-label="Pixel-art mine with a wizard"></canvas><div id="scene-labels" aria-hidden="true"></div></div>
-    <div class="hud">
-      <div class="hud-top">
-        <div class="panel" id="hud-hash"></div>
-        <div class="panel" id="hud-chain"></div>
+    <div class="mine-view">
+      <div class="scene-wrap"><canvas id="scene" aria-label="Pixel-art mine with a wizard"></canvas></div>
+      <div class="hud">
+        <div class="hud-top">
+          <div class="panel" id="hud-hash"></div>
+          <div class="panel" id="hud-chain"></div>
+        </div>
+        <div id="pending-pill" class="pill" hidden><canvas></canvas></div>
       </div>
-      <div id="pending-pill" class="pill" hidden><canvas></canvas></div>
-      <div class="hud-bottom">
-        <div class="panel" id="hud-loot"></div>
-        <div class="panel trophies" id="hud-trophies"></div>
-      </div>
+      <div id="banner" class="banner" hidden><canvas></canvas><canvas class="sub"></canvas></div>
     </div>
-    <div id="banner" class="banner" hidden><canvas></canvas><canvas class="sub"></canvas></div>
+    <div class="hud-strip" id="hud-strip">
+      <div class="strip-stats" id="hud-loot"></div>
+      <div class="trophies" id="hud-trophies"></div>
+    </div>
   </section>
 
   <section id="page-ledger" class="page ledger" aria-label="The Ledger" hidden>

@@ -270,7 +270,7 @@ func runCoin(t *testing.T, cfg suite) {
 	if cfg.concurrent {
 		t.Run("ConcurrentMiners", func(t *testing.T) { testConcurrent(t, enA, a, rec, expectNonAccepted) })
 		t.Run("LiveDifficultySettings", func(t *testing.T) { testLiveDifficulty(t, enA, cfgA.DataDir) })
-		t.Run("CreaturesAndMana", func(t *testing.T) { testCreaturesAndMana(t, enA) })
+		t.Run("CreaturesAndLuck", func(t *testing.T) { testCreaturesAndLuck(t, enA) })
 	}
 
 	// ZMQ must have been the primary new-block signal in phase A.
@@ -1161,11 +1161,11 @@ func testLiveDifficulty(t *testing.T, en *Engine, dataDir string) {
 	t.Log("live difficulty: fixed, password pin, per-worker override, clamping, validation, persistence and reset verified")
 }
 
-// testCreaturesAndMana mines shares that do not solve blocks (possible on
+// testCreaturesAndLuck mines shares that do not solve blocks (possible on
 // regtest only with a share difficulty below network difficulty) and checks
 // the UI state: creature rarity from the job's best share as a % of network
-// difficulty, and the MANA luck percentile filling since the last block.
-func testCreaturesAndMana(t *testing.T, en *Engine) {
+// difficulty, and the luck percentile filling since the last block.
+func testCreaturesAndLuck(t *testing.T, en *Engine) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	uiBase := "http://" + en.E.UIAddr()
@@ -1280,11 +1280,11 @@ func testCreaturesAndMana(t *testing.T, en *Engine) {
 	}
 	l := st.Pool.Luck
 	if st.Derived.Luck == nil || l.Shares < int(accepted.Load()) || l.BestDiff <= 0 {
-		t.Fatalf("mana luck not filled: %+v %+v", st.Derived.Luck, l)
+		t.Fatalf("luck not filled: %+v %+v", st.Derived.Luck, l)
 	}
 	if exp := math.Exp(-l.SumDiff/l.BestDiff) * 100; math.Abs(exp-*st.Derived.Luck) > 1e-6 {
 		t.Fatalf("luck %v, want exp(-S/D) = %v", *st.Derived.Luck, exp)
 	}
-	t.Logf("%d non-block shares: job creature %s (%s) at %.2f%% of network difficulty; MANA luck %.2f%%",
+	t.Logf("%d non-block shares: job creature %s (%s) at %.2f%% of network difficulty; luck %.2f%%",
 		accepted.Load(), cur.Creature, cur.Rarity, cur.Pct, *st.Derived.Luck)
 }

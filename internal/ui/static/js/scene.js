@@ -5,7 +5,7 @@ import {
   WIZARD_KEYS, WIZARD_BODY, WIZARD_BLINK_ROW, WIZARD_LEGS, SHOULDER,
   CREATURE, CREATURE_HORNS, CREATURE_COLORS, DRAGON, LEGENDARY, BUBBLE_Q, MINECART,
 } from './sprites.js';
-import { drawTextBuf, textWidth, setPixelText } from './font.js';
+import { drawTextBuf, textWidth } from './font.js';
 
 // ---------- colour helpers ----------
 
@@ -90,41 +90,6 @@ export class Scene {
     this._loop = (ts) => this.frame(ts);
   }
 
-  // Scene labels are DOM overlays (pixel font at a small, crisp size) that
-  // track objects in the scene; scene pixels are too large for small text.
-  setOverlay(el) { this.overlay = el; this.labelEls = {}; }
-  // Draw a label centred at scene point (x, y = label bottom), fully on
-  // screen and lifted above any character box it would overlap.
-  label(key, text, x, y, color, avoid = []) {
-    if (!this.overlay) return;
-    let el = this.labelEls[key];
-    if (!el) {
-      el = document.createElement('canvas');
-      el.className = 'pxtext scene-label';
-      this.overlay.append(el);
-      this.labelEls[key] = el;
-    }
-    const narrow = window.matchMedia('(max-width: 640px), (max-height: 460px)').matches;
-    setPixelText(el, text, color, narrow ? 1 : 1.5);
-    const k = this.cssPerPx || 1;
-    const w = parseFloat(el.style.width) || 0, h = parseFloat(el.style.height) || 0;
-    const visW = this.overlay.clientWidth || this.W * k;
-    const left = Math.max(4, Math.min(visW - w - 4, x * k - w / 2));
-    let bottom = y * k;
-    // Avoid character boxes (scene px) and labels placed earlier this frame (css px).
-    const boxes = avoid.map((b) => ({ x0: b.x * k, x1: (b.x + b.w) * k, y0: b.y * k, y1: (b.y + b.h) * k }))
-      .concat(this.placedLabels || []);
-    for (let pass = 0; pass < 4; pass++) {
-      for (const b of boxes) {
-        if (left < b.x1 + 3 && left + w > b.x0 - 3 && bottom - h < b.y1 && bottom > b.y0) bottom = b.y0 - 2;
-      }
-    }
-    (this.placedLabels ||= []).push({ x0: left, x1: left + w, y0: bottom - h, y1: bottom });
-    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(Math.max(2, bottom - h))}px)`;
-    el.hidden = false;
-    this.labelSeen[key] = true;
-  }
-  wizardBox() { const g = this.pose(); return { x: g.ox - 2, y: g.oy - 14, w: 22, h: 42 }; }
   on(ev, fn) { (this.listeners[ev] ||= []).push(fn); }
   emit(ev, ...a) { for (const f of this.listeners[ev] || []) f(...a); }
 
@@ -144,7 +109,7 @@ export class Scene {
     this.creature = { tier, name, t: 0, leaving: false, leaveT: 0 }; // name shows briefly; the HUD keeps it
   }
   // Blocks found but not yet matured: shown as a glowing block in the floor
-  // that the wizard digs at, with its confirmation progress.
+  // that the wizard digs at (its confirmations are a HUD readout).
   setDigging(list) { this.digging = list || []; }
   setCreatureName(name) { if (this.creature && !this.creature.leaving) this.creature.name = name; }
   hideCreature() { if (this.creature) this.creature.leaving = true; }
@@ -579,13 +544,9 @@ export class Scene {
     this.drawMist();
     this.drawWizard();
     this.drawParticles();
-    this.labelSeen = {};
-    this.placedLabels = [];
-    this.creatureBox = null;
-    this.drawCreature();
     this.drawDigging();
+    this.drawCreature();
     this.drawCongrats();
-    for (const [k, el] of Object.entries(this.labelEls || {})) if (!this.labelSeen[k]) el.hidden = true;
     if (this.flashT > 0) this.flash(this.flashT / 0.35);
     this.ctx.putImageData(this.img, 0, 0);
   }
@@ -757,9 +718,6 @@ export class Scene {
       const col = colorOf(ch, x, y);
       for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) this.px(x0 + x * scale + sx, y0 + y * scale + sy, col);
     }
-    if (this.congrats) return; // keep the celebration uncluttered
-    this.creatureBox = { x: x0, y: y0, w, h };
-    this.label('creature', cr.name.toUpperCase(), x0 + w / 2, y0 - 2, '#ffffff', [this.wizardBox()]);
   }
 
   drawDigging() {
@@ -781,11 +739,6 @@ export class Scene {
     const frac = Math.max(0, Math.min(1, b.conf / b.maturity));
     for (let x = -1; x < 12; x++) { this.px(x0 - 1 + x, y0 + 11, this.keys.K); this.px(x0 - 1 + x, y0 + 14, this.keys.K); }
     for (let x = 0; x < 11; x++) for (let y = 12; y < 14; y++) this.px(x0 - 1 + x, y0 + y, x < Math.round(frac * 11) ? this.pal[RAIN + ((x + pulse) & 15)] : this.pal[24]);
-    const label = `#${b.height} ${Math.min(b.conf, b.maturity)}/${b.maturity}` + (list.length > 1 ? ` +${list.length - 1} MORE` : '');
-    // Above the block, lifted clear of the wizard and the creature.
-    const avoid = [this.wizardBox()];
-    if (this.creature && this.creatureBox) avoid.push(this.creatureBox);
-    this.label('digging', label, x0 + 4, y0 - 3, '#ffd166', avoid);
   }
 
   // Confirmed block: a small rainbow with "CONGRATULATIONS WIZARD!".

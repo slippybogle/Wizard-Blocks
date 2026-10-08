@@ -273,7 +273,7 @@ func TestRoundViewsTierFromNetworkPct(t *testing.T) {
 	}
 }
 
-func TestManaLuck(t *testing.T) {
+func TestLuckSinceLastBlock(t *testing.T) {
 	s, _, _ := startUI(t, "")
 	if s.BuildState(1, 1).Derived.LuckPct != nil {
 		t.Fatal("luck before any share")

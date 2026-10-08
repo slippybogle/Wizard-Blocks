@@ -49,20 +49,21 @@ UI with two pages: **The Mine** and **The Ledger**.
 - **The Mine**: an endless pixel-art mine with parallax, palette-cycling crystals
   whose shimmer follows your hashrate, and a wizard in a rainbow robe.
   - The wizard swings his pickaxe on every accepted share.
-  - Each job spawns a creature, rated by that job's best share as a % of network difficulty:
+  - Each job spawns a creature, rated by that job's best share as a % of network
+    difficulty (the HUD shows only the %; tier names are internal):
     - Common < 50 %
     - Uncommon 50–63.3 %
     - Rare 63.3–76.7 %
     - Epic 76.7–90 %
     - Legendary (the dragon) 90–< 100 %
     - Block ≥ 100 %
-  - The HUD shows:
+  - The HUD (top panels, plus a full-width strip below the scene) shows:
     - pool hashrate (now / 1 h / 24 h) and active workers;
-    - best share this job and all-time;
+    - best share this job and all-time, and this job's beast as a % of network difficulty;
     - network difficulty, height and node sync;
     - estimated time to block and blocks found;
-    - a **MANA** bar: the luck percentile since your last found block (resets only when you find one);
-    - a trophy wall of found blocks with x/100 confirmations.
+    - a **LUCK SINCE LAST BLOCK** bar: the luck percentile since your last found block (resets only when you find one);
+    - the block being dug out with x/100 confirmations, and a trophy wall of matured blocks.
   - A block is celebrated only after the node confirms it on the active chain:
     the wizard shows a rainbow with "CONGRATULATIONS WIZARD!".
   - Optional CRT scanlines, generated chiptune audio (off by default).

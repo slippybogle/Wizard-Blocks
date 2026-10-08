@@ -65,7 +65,6 @@ function pxCanvas(text, color, cssPx) {
 
 // ---------- app ----------
 const scene = new Scene($('#scene'));
-scene.setOverlay($('#scene-labels'));
 const sound = new Sound();
 let prev = null;
 let state = null;
@@ -107,24 +106,29 @@ function buildHUD() {
   const r4 = row(c);
   stat(r4, 'netdiff', 'NET DIFFICULTY', { short: 'NET DIFF' });
   stat(r4, 'eta', 'EST. TIME TO BLOCK', { short: 'EST. BLOCK' });
-  const r5 = row(l);
-  stat(r5, 'bestJob', 'BEST THIS JOB', { color: C.gold, short: 'BEST JOB' });
-  stat(r5, 'bestAll', 'BEST ALL-TIME', { color: C.gold, short: 'ALL-TIME' });
-  const r6 = row(l);
-  stat(r6, 'found', 'BLOCKS FOUND', { color: C.gold, short: 'BLOCKS' });
-  stat(r6, 'creature', 'THIS JOB\u2019S BEAST', { short: 'BEAST' }).classList.add('wide');
-  // MANA: luck percentile since our last found block (resets only on a find).
-  const mana = document.createElement('div');
-  mana.className = 'stat wide mana';
-  mana.innerHTML = '<div class="lab"><canvas class="pxtext"></canvas></div><div class="mana-row"><canvas class="mana-bar"></canvas><canvas class="pxtext"></canvas></div>';
-  l.append(mana);
-  const [lc, bar, vc] = mana.querySelectorAll('canvas');
-  hud.mana = { lc, bar, vc };
+  stat(l, 'bestJob', 'BEST THIS JOB', { color: C.gold, short: 'BEST JOB' });
+  stat(l, 'bestAll', 'BEST ALL-TIME', { color: C.gold, short: 'ALL-TIME' });
+  stat(l, 'found', 'BLOCKS FOUND', { color: C.gold, short: 'BLOCKS' });
+  stat(l, 'creature', 'THIS JOB\u2019S BEAST', { short: 'BEAST' });
+  // Luck percentile since our last found block (resets only on a find).
+  const luck = document.createElement('div');
+  luck.className = 'stat luck';
+  luck.innerHTML = '<div class="lab"><canvas class="pxtext"></canvas></div><div class="bar-row"><canvas class="luck-bar"></canvas><canvas class="pxtext"></canvas></div>';
+  l.append(luck);
+  const [lc, bar, vc] = luck.querySelectorAll('canvas');
+  hud.luck = { lc, bar, vc };
+  // DIGGING: the newest found block still collecting confirmations.
+  const dig = document.createElement('div');
+  dig.className = 'stat dig';
+  dig.innerHTML = '<div class="lab"><canvas class="pxtext"></canvas></div><div class="bar-row"><canvas class="dig-bar"></canvas><canvas class="pxtext"></canvas></div>';
+  l.append(dig);
+  const [dl, dbar, dv] = dig.querySelectorAll('canvas');
+  hud.dig = { el: dig, lc: dl, bar: dbar, vc: dv };
 }
 
-// Pixel-art mana bar: 48 cells, frame, glowing gradient fill with sparkles.
-const MANA_STOPS = ['#1b2a8f', '#2b4cff', '#39a0ff', '#39d0ff', '#8f7dff', '#c77dff'];
-function drawMana(canvas, pct) {
+// Pixel-art progress bar: 48 cells, frame, glowing gradient fill with sparkles.
+const LUCK_STOPS = ['#1b2a8f', '#2b4cff', '#39a0ff', '#39d0ff', '#8f7dff', '#c77dff'];
+function drawBar(canvas, pct, stops = LUCK_STOPS, hi = '#bfe6ff', lo = '#141c5c') {
   const cells = 48, rows = 7;
   const dpr = window.devicePixelRatio || 1;
   const s = Math.max(1, Math.round((narrow() ? 2 : 3) * dpr));
@@ -143,11 +147,11 @@ function drawMana(canvas, pct) {
   const fill = Math.round((Math.max(0, Math.min(100, pct || 0)) / 100) * cells);
   const t = Date.now() / 120;
   for (let i = 0; i < fill; i++) {
-    const stop = MANA_STOPS[Math.min(MANA_STOPS.length - 1, Math.floor((i / cells) * MANA_STOPS.length))];
+    const stop = stops[Math.min(stops.length - 1, Math.floor((i / cells) * stops.length))];
     for (let r = 0; r < rows; r++) {
       let c = stop;
-      if (r === 0) c = '#bfe6ff';            // top highlight
-      else if (r === rows - 1) c = '#141c5c'; // bottom shade
+      if (r === 0) c = hi;                   // top highlight
+      else if (r === rows - 1) c = lo;       // bottom shade
       else if ((i * 7 + r * 3 + Math.floor(t)) % 23 === 0) c = '#ffffff'; // sparkle
       px(2 + i, 2 + r, c);
     }
@@ -166,20 +170,17 @@ function setStat(key, value, color) {
 // In portrait the bottom HUD spans the full width: tell the scene so the
 // floor (and the wizard) stay visible above it.
 function syncInsets() {
-  // Portrait phones: the scene fills the band between the top and bottom
-  // HUD instead of sitting behind them (no empty sky, wizard never hidden).
+  // Portrait phones: the scene fills the band below the top HUD instead of
+  // sitting behind it (no empty sky, wizard never hidden).
   const portrait = window.innerHeight > window.innerWidth && narrow();
   const wrap = document.querySelector('.scene-wrap');
   if (portrait) {
     const top = document.querySelector('.hud-top');
-    const bottom = document.querySelector('.hud-bottom');
-    const page = document.querySelector('#page-mine');
     wrap.style.top = (top.offsetTop + top.offsetHeight + 4) + 'px';
-    wrap.style.bottom = Math.max(0, page.clientHeight - bottom.offsetTop + 4) + 'px';
   } else {
     wrap.style.top = '0px';
-    wrap.style.bottom = '0px';
   }
+  wrap.style.bottom = '0px';
   scene.setBottomInset(0);
 }
 
@@ -205,15 +206,27 @@ function renderHUD(st) {
   setStat('bestAll', fmtDiff(p.best_share_difficulty));
   setStat('found', String(p.blocks_found));
   const cur = st.rounds.find((r) => r.current);
-  // >= 100% of network difficulty is a block, never Legendary (90 to <100%).
+  // Only the % of network difficulty is shown; tiers stay backend-only.
   let beast = '—', beastColor = C.ink2;
-  if (cur && cur.tier >= 0 && cur.tier <= LEGENDARY) { beast = `${cur.creature} ${fmtPct(cur.pct_of_network, 3)}`; beastColor = RARITY_COLOR[cur.rarity] || C.ink2; }
-  else if (cur && cur.tier > LEGENDARY) { beast = cur.creature; beastColor = C.gold; }
+  if (cur && cur.tier >= 0) {
+    beast = fmtPct(cur.pct_of_network, 3);
+    beastColor = RARITY_COLOR[cur.rarity] || (cur.tier > LEGENDARY ? C.gold : C.ink2);
+  }
   setStat('creature', beast, beastColor);
-  const luck = d.luck_since_last_block_pct;
-  setPixelText(hud.mana.lc, narrow() ? 'MANA (LUCK)' : 'MANA · LUCK SINCE LAST BLOCK', C.ink3, narrow() ? 1 : 1.5);
-  setPixelText(hud.mana.vc, luck == null ? '—' : fmtPct(luck, 3), '#7fd8ff', narrow() ? 1.25 : 2);
-  drawMana(hud.mana.bar, luck);
+  const luckPct = d.luck_since_last_block_pct;
+  setPixelText(hud.luck.lc, 'LUCK SINCE LAST BLOCK', C.ink3, narrow() ? 1 : 1.5);
+  setPixelText(hud.luck.vc, luckPct == null ? '—' : fmtPct(luckPct, 3), '#7fd8ff', narrow() ? 1.25 : 2);
+  drawBar(hud.luck.bar, luckPct);
+
+  // Block being dug out: newest block still collecting confirmations.
+  const digging = st.blocks.filter((b) => b.chain_status === 'confirming');
+  hud.dig.el.hidden = digging.length === 0;
+  if (digging.length) {
+    const b = digging[0], m = st.coin.coinbase_maturity, c = Math.max(0, Math.min(b.confirmations, m));
+    setPixelText(hud.dig.lc, 'DIGGING OUT (CONFIRMATIONS)', C.ink3, narrow() ? 1 : 1.5);
+    setPixelText(hud.dig.vc, `#${b.height} ${c}/${m}` + (digging.length > 1 ? ` +${digging.length - 1} MORE` : ''), C.gold, narrow() ? 1.25 : 2);
+    drawBar(hud.dig.bar, (c / m) * 100, ['#8a5a00', '#c98a00', '#ffb347', '#ffd166', '#fff0b0'], '#fff6d6', '#5c3b00');
+  }
 
   // Pending: neutral notice, never a celebration.
   const pill = $('#pending-pill');

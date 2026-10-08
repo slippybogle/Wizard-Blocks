@@ -307,7 +307,7 @@ type Derived struct {
 	OddsWeek        float64  `json:"odds_week"`
 	OddsYear        float64  `json:"odds_year"`
 	StaleShares     uint64   `json:"stale_shares"`
-	// LuckPct (MANA bar): luck percentile of all shares since our last found
+	// LuckPct (luck bar): luck percentile of all shares since our last found
 	// block, exp(-S/D)*100; nil until there is a share. Resets only on a
 	// found block, not on new jobs.
 	LuckPct      *float64 `json:"luck_since_last_block_pct"`

@@ -99,7 +99,7 @@ On a Bitaxe: open AxeOS, go to Settings, set Stratum URL `umbrel.local`, port
 Open the web UI from any device on your LAN at **http://umbrel.local:8421**:
 
 - **The Mine** is the live pixel-art view: hashrate, the current job's creature,
-  the MANA (luck) bar and the trophy wall.
+  the luck-since-last-block bar and the trophy wall.
 - **The Ledger** has the full detail. Its **Settings** section (login with
   `UI_ADMIN_PASSWORD`) changes VARDIFF_MIN / VARDIFF_MAX /
   VARDIFF_TARGET_SECONDS / FIXED_DIFF and per-worker difficulty live.
