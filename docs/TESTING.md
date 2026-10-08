@@ -4,7 +4,7 @@ Run on 2026-10-08 (Linux amd64, Go 1.24.7, Docker 29.8). Every test
 listed below passed on the final code, including under the race detector (`-race`).
 Reproduce with `go test -race ./...` and `scripts/regtest-test.sh all`.
 
-## Unit tests (`go test -race ./...`): 41 tests, all pass
+## Unit tests (`go test -race ./...`): 59 tests, all pass
 
 | package | what is checked |
 |---|---|
@@ -12,7 +12,10 @@ Reproduce with `go test -race ./...` and `scripts/regtest-test.sh all`.
 | `address` | Bitcoin Core `key_io_valid/invalid.json`, BCHN `key_io_valid/invalid.json` (including legacy P2SH32), BCHN `cashaddr_token_types.json` (all types and sizes, round-trip), CashAddr spec examples (prefixless and uppercase), BIP173/BIP350 vectors, cross-network rejection, undefined witness versions refused, BCHN chain names (`chip`, `test4`, …), 20 s fuzz run (1.1 M inputs, no panics). |
 | `work` | Templates built from the real blocks above go through template → job → assembled block → parse → merkle root, coinbase, BIP34, payout and witness commitment. Tampered txid, witness commitment and target/bits are rejected. A shuffled BCH template is restored to the real block's exact CTOR order. Empty regtest template (height 1 = OP_1). 100-byte scriptSig limit. BCH 100-byte coinbase padding. Stratum prevhash encoding. Testnet min-difficulty `MinShareTime`. |
 | `stratum` | subscribe/configure (mask intersection)/authorize (`d=` password)/submit error codes, malformed JSON, disconnect after repeated garbage, slow client disconnected, message rate limit, per-IP connection limit, oversized line, auth timeout, vardiff convergence from 0.5 TH/s to 2 PH/s, quiet-miner decrease and min clamp, the three version-rolling interpretations, 30 s fuzz of the message handler (no panics). |
-| `node`, `stats`, `config` | ZMTP framing/metadata limits; hashrate windows; `pending` blocks not counted as found; Prometheus output; persistence round-trip; config env overrides and validation. |
+| `stratum` (difficulty) | `DiffSettings` validation (min ≤ max, 1e-12..1e15, target 1–600, FIXED_DIFF within range); `d=` password parsing and clamping; FIXED_DIFF disables vardiff; precedence override > `d=` > FIXED_DIFF > vardiff; live settings re-applied to connected sessions (new difficulty + fresh job). |
+| `work` (submit) | `TestBlockAnnouncedOnce`: one accepted block logs `BLOCK ACCEPTED` exactly once, even when verified repeatedly. |
+| `node`, `stats`, `config` | ZMTP framing/metadata limits; hashrate windows; `pending` blocks not counted as found; Prometheus output; persistence round-trip; per-job rounds; luck resets only when a block is found (not on new jobs); config env overrides and validation (difficulty env, stratum public port, `WB_UI_LISTEN=off`). |
+| `ui` | Settings auth: disabled without a password, login/logout flow, tampered cookie refused, login rate limit (5 failures / 5 min), cross-origin and header-less writes refused, settings absent from the stratum/stats ports. Static files and `/api/state`. Creature tiers at the exact cutoffs (50 / 63.3 / 76.7 / 90 / 100 %), a share ≥ 100 % or a found block is Block tier (never Legendary). Luck-since-last-block percentage. Every character the UI renders has a pixel-font glyph. |
 
 ## Regtest integration harness (`test/integration`, Docker)
 
@@ -73,6 +76,14 @@ The built-in CPU miner (independent cgminer-style header code that uses only
 - **Stats API**: `/stats` (`blocks_found` = confirmed blocks, `blocks_pending` = 0
   at rest), `/metrics`, `/healthz`.
 - **Graceful shutdown** of every engine instance (in-flight submissions awaited).
+- **LiveDifficultySettings** (BCH): the settings API is 404 on the stats port
+  and 401 without login. After login, FIXED_DIFF and per-worker overrides reach
+  connected miners immediately (new difficulty, then a fresh job), overrides are
+  clamped, invalid values are refused, and changes are saved to disk and
+  removed by reset.
+- **CreaturesAndLuck** (BCH): with FIXED_DIFF below network difficulty, shares
+  that do not solve blocks give the current job a creature tier from its % of
+  network difficulty, and the luck-since-last-block percentage fills.
 
 ## Testnet stack (`deploy/bch-testnet`)
 
@@ -81,6 +92,19 @@ Smoke-tested in this environment: BCHN 29.2.0 started on chipnet (reports
 its ports and entered "waiting for node to sync". Shutdown persisted state to
 the named volume. **Not tested here:** syncing chipnet and mining a real testnet
 block, because this sandbox has no P2P internet access.
+
+## Testnet stack (`deploy/btc-testnet`)
+
+Smoke-tested in this environment: Bitcoin Core 28.1 on testnet4, the engine
+validated a node-generated `tb1q…` address, bound stratum 3336 and stats
+127.0.0.1:8091 with the UI off, and entered "waiting for node to sync".
+**Not tested here:** syncing testnet4 and mining a real block (no P2P internet).
+
+## Web UI (manual)
+
+Screenshots checked at 1440×900 desktop and iPhone portrait/landscape (390×844):
+no console errors, no labels in the scene, top HUD panels and the bottom strip
+never cover the wizard or creatures.
 
 ## Not covered / known limits
 
