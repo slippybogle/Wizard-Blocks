@@ -435,7 +435,11 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 			v.LuckPct = &l
 		}
 		v.Tier, v.Rarity, v.Creature = creatureFor(v.PctOfNetwork)
-		if v.Tier == BlockTier && !blockAt[r.Height] {
+		if blockAt[r.Height] && r.BestDiff > 0 {
+			// A block we found at this job's height is a Block, even if float
+			// division puts its share a hair under 100%.
+			v.Tier, v.Rarity, v.Creature = creatureFor(math.Max(v.PctOfNetwork, 100))
+		} else if v.Tier == BlockTier {
 			// Reached the network target, but no block from this job is (or is
 			// becoming) part of the chain: not a real found block.
 			v.Creature = "Block (not accepted)"

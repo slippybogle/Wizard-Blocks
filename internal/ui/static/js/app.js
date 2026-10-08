@@ -205,8 +205,11 @@ function renderHUD(st) {
   setStat('bestAll', fmtDiff(p.best_share_difficulty));
   setStat('found', String(p.blocks_found));
   const cur = st.rounds.find((r) => r.current);
-  setStat('creature', cur && cur.tier >= 0 && cur.tier <= LEGENDARY ? `${cur.creature} ${fmtPct(cur.pct_of_network, 3)}` : '—',
-    RARITY_COLOR[cur?.rarity] || C.ink2);
+  // >= 100% of network difficulty is a block, never Legendary (90 to <100%).
+  let beast = '—', beastColor = C.ink2;
+  if (cur && cur.tier >= 0 && cur.tier <= LEGENDARY) { beast = `${cur.creature} ${fmtPct(cur.pct_of_network, 3)}`; beastColor = RARITY_COLOR[cur.rarity] || C.ink2; }
+  else if (cur && cur.tier > LEGENDARY) { beast = cur.creature; beastColor = C.gold; }
+  setStat('creature', beast, beastColor);
   const luck = d.luck_since_last_block_pct;
   setPixelText(hud.mana.lc, narrow() ? 'MANA (LUCK)' : 'MANA · LUCK SINCE LAST BLOCK', C.ink3, narrow() ? 1 : 1.5);
   setPixelText(hud.mana.vc, luck == null ? '—' : fmtPct(luck, 3), '#7fd8ff', narrow() ? 1.25 : 2);

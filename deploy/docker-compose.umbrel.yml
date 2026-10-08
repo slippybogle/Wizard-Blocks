@@ -58,7 +58,7 @@ services:
       WB_PAYOUT_MODE: fixed
       WB_PAYOUT_ADDRESS: ${BTC_PAYOUT_ADDRESS:?set BTC_PAYOUT_ADDRESS}
       WB_STRATUM_LISTEN: 0.0.0.0:3333
-      WB_UI_LISTEN: ""                         # BCH-only UI for now
+      WB_UI_LISTEN: "off"                      # BCH-only UI for now
     ports:
       - "3334:3333"
       - "127.0.0.1:8081:8080"

@@ -93,7 +93,9 @@ export class Scene {
   // Scene labels are DOM overlays (pixel font at a small, crisp size) that
   // track objects in the scene; scene pixels are too large for small text.
   setOverlay(el) { this.overlay = el; this.labelEls = {}; }
-  label(key, text, x, y, color) {
+  // Draw a label centred at scene point (x, y = label bottom), fully on
+  // screen and lifted above any character box it would overlap.
+  label(key, text, x, y, color, avoid = []) {
     if (!this.overlay) return;
     let el = this.labelEls[key];
     if (!el) {
@@ -106,12 +108,23 @@ export class Scene {
     setPixelText(el, text, color, narrow ? 1 : 1.5);
     const k = this.cssPerPx || 1;
     const w = parseFloat(el.style.width) || 0, h = parseFloat(el.style.height) || 0;
-    const maxX = this.W * k - w - 4;
-    const left = Math.max(4, Math.min(maxX, x * k - w / 2));
-    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(y * k - h)}px)`;
+    const visW = this.overlay.clientWidth || this.W * k;
+    const left = Math.max(4, Math.min(visW - w - 4, x * k - w / 2));
+    let bottom = y * k;
+    // Avoid character boxes (scene px) and labels placed earlier this frame (css px).
+    const boxes = avoid.map((b) => ({ x0: b.x * k, x1: (b.x + b.w) * k, y0: b.y * k, y1: (b.y + b.h) * k }))
+      .concat(this.placedLabels || []);
+    for (let pass = 0; pass < 4; pass++) {
+      for (const b of boxes) {
+        if (left < b.x1 + 3 && left + w > b.x0 - 3 && bottom - h < b.y1 && bottom > b.y0) bottom = b.y0 - 2;
+      }
+    }
+    (this.placedLabels ||= []).push({ x0: left, x1: left + w, y0: bottom - h, y1: bottom });
+    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(Math.max(2, bottom - h))}px)`;
     el.hidden = false;
     this.labelSeen[key] = true;
   }
+  wizardBox() { const g = this.pose(); return { x: g.ox - 2, y: g.oy - 14, w: 22, h: 42 }; }
   on(ev, fn) { (this.listeners[ev] ||= []).push(fn); }
   emit(ev, ...a) { for (const f of this.listeners[ev] || []) f(...a); }
 
@@ -152,7 +165,10 @@ export class Scene {
     const devW = Math.max(1, Math.round(parent.clientWidth * dpr));
     const devH = Math.max(1, Math.round(parent.clientHeight * dpr));
     // Integer scale: aim for ~150-260 logical px vertically, >= 200 wide.
-    const scale = Math.max(1, Math.floor(Math.min(devH / 128, devW / 200)));
+    // Landscape: ~128+ logical px tall. Portrait: zoom in (narrower view) so
+    // the mine fills the space instead of leaving empty rock above it.
+    const portrait = devH > devW;
+    const scale = Math.max(1, Math.floor(portrait ? Math.min(devH / 180, devW / 150) : Math.min(devH / 128, devW / 200)));
     const W = Math.ceil(devW / scale), H = Math.min(BG_H, Math.ceil(devH / scale));
     if (W === this.W && H === this.H && scale === this.scale && this.bottomInsetCss === this._inset) return;
     this._inset = this.bottomInsetCss;
@@ -166,9 +182,9 @@ export class Scene {
     // Keep the floor above a full-width bottom HUD (portrait phones).
     const inset = Math.round((this.bottomInsetCss || 0) * dpr / scale);
     this.floorY = Math.min(H - 30, Math.max(Math.round(H * 0.45), H - 44 - inset));
-    if (!this._placed) { this.wiz.x = this.cam + W * 0.45; this._placed = true; }
+    if (!this._placed) { this.wiz.x = this.cam + W * 0.4; this._placed = true; }
     const sx = this.wiz.x - this.cam;
-    if (sx < W * 0.3 || sx > W * 0.6) this.wiz.x = this.cam + W * 0.45;
+    if (sx < W * 0.3 || sx > W * 0.5) this.wiz.x = this.cam + W * 0.4;
     this.genMid();
     this.genFloor();
     this.genForeground();
@@ -254,7 +270,7 @@ export class Scene {
     };
     // Roof: 118 px above the floor, or higher up on tall (portrait) scenes
     // so the timber frame fills the view instead of empty rock.
-    const ceil = Math.max(10, Math.min(fy - 118, Math.round(H * 0.2)));
+    const ceil = Math.max(10, Math.min(fy - 118, Math.round(H * 0.08)));
     // Roof timber (continuous) with grain.
     for (let x = 0; x < MID_W; x++) {
       for (let y = ceil; y < ceil + 7; y++) {
@@ -437,8 +453,8 @@ export class Scene {
         w.walkT += dt;
         w.x += w.face * 20 * dt;
         const sx = w.x - this.cam;
-        if (sx > W * 0.56) this.cam = w.x - W * 0.56;
-        if (sx < W * 0.34) { w.x = this.cam + W * 0.34; w.state = 'idle'; w.timer = 1; }
+        if (sx > W * 0.5) this.cam = w.x - W * 0.5;
+        if (sx < W * 0.3) { w.x = this.cam + W * 0.3; w.state = 'idle'; w.timer = 1; }
         if (Math.random() < dt * 6) this.particles.push({ x: w.x - this.cam + 6, y: this.floorY + 11, vx: -w.face * 8, vy: -6, life: 0.5, c: this.pal[6] });
       }
     }
@@ -564,8 +580,10 @@ export class Scene {
     this.drawWizard();
     this.drawParticles();
     this.labelSeen = {};
-    this.drawDigging();
+    this.placedLabels = [];
+    this.creatureBox = null;
     this.drawCreature();
+    this.drawDigging();
     this.drawCongrats();
     for (const [k, el] of Object.entries(this.labelEls || {})) if (!this.labelSeen[k]) el.hidden = true;
     if (this.flashT > 0) this.flash(this.flashT / 0.35);
@@ -730,7 +748,7 @@ export class Scene {
     const enter = Math.min(1, cr.t / 0.6), leave = cr.leaving ? Math.min(1, cr.leaveT / 0.6) : 0;
     const hop = Math.abs(Math.sin(cr.t * (dragon ? 3 : 5))) * (dragon ? 6 : 4);
     const w = rows[0].length * scale, h = rows.length * scale;
-    const x0 = Math.round(this.W * 0.8 - w / 2 + (1 - enter) * 60 + leave * 80);
+    const x0 = Math.round(this.W * 0.83 - w / 2 + (1 - enter) * 60 + leave * 80);
     const y0 = Math.round(this.floorY + 12 - h - hop);
     const colorOf = (ch, x, y) => ({ K: this.keys.K, C, c, W: this.white, Y: this.gold[0], R: this.pal[RAIN + ((x + y) & 15)] })[ch];
     for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[0].length; x++) {
@@ -740,14 +758,15 @@ export class Scene {
       for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) this.px(x0 + x * scale + sx, y0 + y * scale + sy, col);
     }
     if (this.congrats) return; // keep the celebration uncluttered
-    this.label('creature', cr.name.toUpperCase(), x0 + w / 2, y0 - 2, '#ffffff');
+    this.creatureBox = { x: x0, y: y0, w, h };
+    this.label('creature', cr.name.toUpperCase(), x0 + w / 2, y0 - 2, '#ffffff', [this.wizardBox()]);
   }
 
   drawDigging() {
     const list = this.digging;
     if (!list || !list.length || this.congrats) return;
     const b = list[0];
-    const x0 = Math.round(this.W * 0.64), y0 = this.floorY + 2;
+    const x0 = Math.round(this.W * 0.62), y0 = this.floorY + 2;
     // A glowing gem block half-buried in the floor.
     const pulse = Math.floor(this.t * 6);
     for (let y = 0; y < 9; y++) for (let x = 0; x < 9; x++) {
@@ -763,7 +782,10 @@ export class Scene {
     for (let x = -1; x < 12; x++) { this.px(x0 - 1 + x, y0 + 11, this.keys.K); this.px(x0 - 1 + x, y0 + 14, this.keys.K); }
     for (let x = 0; x < 11; x++) for (let y = 12; y < 14; y++) this.px(x0 - 1 + x, y0 + y, x < Math.round(frac * 11) ? this.pal[RAIN + ((x + pulse) & 15)] : this.pal[24]);
     const label = `#${b.height} ${Math.min(b.conf, b.maturity)}/${b.maturity}` + (list.length > 1 ? ` +${list.length - 1} MORE` : '');
-    this.label('digging', label, x0 + 4, y0 + 22, '#ffd166');
+    // Above the block, lifted clear of the wizard and the creature.
+    const avoid = [this.wizardBox()];
+    if (this.creature && this.creatureBox) avoid.push(this.creatureBox);
+    this.label('digging', label, x0 + 4, y0 - 3, '#ffd166', avoid);
   }
 
   // Confirmed block: a small rainbow with "CONGRATULATIONS WIZARD!".

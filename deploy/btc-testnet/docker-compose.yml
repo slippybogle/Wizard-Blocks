@@ -1,0 +1,67 @@
+# BTC TESTNET stack: Bitcoin Core on testnet4 plus the Wizard-Blocks engine
+# pointed at it. Separate from the mainnet setup and from bch-testnet: own
+# project name, volumes and ports (stratum 3336, stats 127.0.0.1:8091).
+#
+#   cp .env.example .env   # then edit
+#   docker compose up -d --build
+#
+# See README.md in this directory for the full Umbrel walkthrough.
+name: wizard-blocks-btc-testnet
+
+services:
+  bitcoind:
+    image: bitcoin/bitcoin:28.1
+    restart: unless-stopped
+    stop_grace_period: 120s
+    command:
+      - bitcoind
+      - -testnet4
+      - -server=1
+      - -rpcuser=${RPC_USER:?set RPC_USER in .env}
+      - -rpcpassword=${RPC_PASSWORD:?set RPC_PASSWORD in .env}
+      - -rpcport=18332
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0                # only reachable on the compose network
+      - -zmqpubhashblock=tcp://0.0.0.0:28332
+      - -dbcache=${BITCOIND_DBCACHE_MB:-450}
+      - -prune=${BITCOIND_PRUNE_MB:-0}       # 0 = keep full chain; >= 550 enables pruning
+      - -printtoconsole=1
+    volumes:
+      - bitcoind-data:/home/bitcoin/.bitcoin
+    # No RPC/ZMQ ports are published: only the engine talks to the node.
+
+  engine:
+    build: ../..
+    image: wizard-blocks:local
+    restart: unless-stopped
+    stop_grace_period: 90s                   # let an in-flight block submission finish
+    depends_on: [bitcoind]
+    environment:
+      WB_COIN: btc
+      WB_RPC_URL: http://bitcoind:18332
+      WB_RPC_USER: ${RPC_USER}
+      WB_RPC_PASSWORD: ${RPC_PASSWORD}
+      WB_ZMQ_HASHBLOCK: tcp://bitcoind:28332
+      WB_PAYOUT_MODE: ${PAYOUT_MODE:-fixed}
+      WB_PAYOUT_ADDRESS: ${PAYOUT_ADDRESS:-}
+      WB_COINBASE_TAG: /wizard-blocks-testnet/
+      WB_STRATUM_LISTEN: 0.0.0.0:3333        # inside the container; published as STRATUM_PORT
+      WB_STRATUM_PUBLIC_PORT: ${STRATUM_PORT:-3336}
+      WB_API_LISTEN: 0.0.0.0:8080
+      WB_UI_LISTEN: "off"                    # the web UI is BCH-only for now
+      WB_VARDIFF_INITIAL: ${VARDIFF_INITIAL:-512}
+      WB_VARDIFF_MIN: ${VARDIFF_MIN:-1}
+      WB_VARDIFF_MAX: ${VARDIFF_MAX:-1000000000000000}
+      WB_VARDIFF_TARGET_SECONDS: ${VARDIFF_TARGET_SECONDS:-10}
+      WB_FIXED_DIFF: ${FIXED_DIFF:-0}
+      WB_LOG_LEVEL: ${LOG_LEVEL:-info}
+      WB_LOG_FORMAT: text
+    ports:
+      - "${STRATUM_PORT:-3336}:3333"            # miners on your LAN
+      - "127.0.0.1:${API_PORT:-8091}:8080"      # stats JSON / metrics (local only)
+    volumes:
+      - engine-data:/data
+
+volumes:
+  bitcoind-data:   # chain data (docker volume: wizard-blocks-btc-testnet_bitcoind-data)
+  engine-data:     # found blocks / best share

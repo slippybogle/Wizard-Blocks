@@ -117,3 +117,10 @@ func TestStratumPorts(t *testing.T) {
 		t.Fatalf("public port %d %v", c.StratumPort(), err)
 	}
 }
+
+func TestUIOff(t *testing.T) {
+	c, err := Load("", env(map[string]string{"WB_RPC_USER": "u", "WB_PAYOUT_ADDRESS": "x", "WB_UI_LISTEN": "off"}))
+	if err != nil || c.UI.Listen != "" {
+		t.Fatalf("WB_UI_LISTEN=off: %q %v", c.UI.Listen, err)
+	}
+}

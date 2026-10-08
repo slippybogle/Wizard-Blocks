@@ -259,6 +259,15 @@ func TestRoundViewsTierFromNetworkPct(t *testing.T) {
 	if r := s.BuildState(10, 10).Rounds[0]; r.Creature != "Block found!" {
 		t.Fatalf("100%% job with accepted block: %+v", r)
 	}
+	// A found block whose share computes to a hair under 100% is still a Block.
+	s.st.SetTemplate(func(ti *stats.TemplateInfo) { ti.Height, ti.PrevHash, ti.NetworkDiff = 11, "cc", 1000 })
+	s.st.ShareAccepted("w", 1, 999.9999999, "x")
+	s.st.BlockSubmitted(stats.BlockRecord{Height: 11, Hash: "dd", Status: "accepted"})
+	if r := s.BuildState(10, 10).Rounds[0]; r.Tier != BlockTier || r.Rarity != "Block" {
+		t.Fatalf("found block at 99.99999%%: %+v", r)
+	}
+	s.st.SetTemplate(func(ti *stats.TemplateInfo) { ti.Height, ti.PrevHash, ti.NetworkDiff = 10, "aa2", 1000 })
+	s.st.ShareAccepted("w", 1, 1000, "x")
 	if d := s.BuildState(10, 10).Derived; d.BestThisJobPct != 100 {
 		t.Fatalf("best_this_job_pct %v", d.BestThisJobPct)
 	}

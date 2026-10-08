@@ -65,7 +65,7 @@ type API struct {
 
 // UI configures the embedded web interface.
 type UI struct {
-	Listen string `json:"listen"` // "" disables the UI
+	Listen string `json:"listen"` // "" or "off" disables the UI
 	// AdminPassword protects the Settings section. Empty = settings read-only.
 	AdminPassword string `json:"admin_password"`
 }
@@ -125,6 +125,10 @@ func Load(path string, env func(string) string) (Config, error) {
 	}
 	if err := c.applyEnv(env); err != nil {
 		return c, err
+	}
+	// An empty env value means "unset", so "off" is how env disables the UI.
+	if strings.EqualFold(c.UI.Listen, "off") {
+		c.UI.Listen = ""
 	}
 	return c, c.Validate()
 }

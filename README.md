@@ -12,6 +12,7 @@ UI with two pages: **The Mine** and **The Ledger**.
 - Design and data flow: [docs/DESIGN.md](docs/DESIGN.md)
 - What is tested and the results: [docs/TESTING.md](docs/TESTING.md)
 - BCH testnet on Umbrel: [deploy/bch-testnet/README.md](deploy/bch-testnet/README.md)
+- BTC testnet4 on Umbrel: [deploy/btc-testnet/README.md](deploy/btc-testnet/README.md)
 
 ## Features
 
@@ -172,7 +173,7 @@ example: [deploy/config.example.bch.json](deploy/config.example.bch.json).
 | `WB_VERSION_ROLLING_MASK` | `1fffe000` | subset of BIP320 bits |
 | `WB_VARDIFF_INITIAL` | 1024 | starting difficulty under vardiff |
 | `WB_MAX_CONNECTIONS` / `WB_MAX_CONNECTIONS_PER_IP` | 1024 / 64 | |
-| `WB_UI_LISTEN` | `0.0.0.0:8420` | web UI (`""` disables it) |
+| `WB_UI_LISTEN` | `0.0.0.0:8420` | web UI (`off` disables it) |
 | `WB_UI_ADMIN_PASSWORD` | empty | enables the Settings page |
 | `WB_API_LISTEN` / `WB_PROMETHEUS` | `127.0.0.1:8080` / true | stats JSON / metrics |
 | `WB_LOG_LEVEL` / `WB_LOG_FORMAT` | `info` / `json` | |
