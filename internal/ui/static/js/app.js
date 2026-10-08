@@ -228,11 +228,14 @@ function renderHUD(st) {
     drawBar(hud.dig.bar, (c / m) * 100, ['#8a5a00', '#c98a00', '#ffb347', '#ffd166', '#fff0b0'], '#fff6d6', '#5c3b00');
   }
 
-  // Pending: neutral notice, never a celebration.
+  // Pending: neutral notice, never a celebration. A missing payout address
+  // (no work is issued) takes priority.
   const pill = $('#pending-pill');
   const pending = p.blocks_pending > 0;
-  pill.hidden = !pending;
-  if (pending) setPixelText($('canvas', pill), `BLOCK SUBMITTED · AWAITING NODE CONFIRMATION (${p.blocks_pending})`, C.amber, narrow() ? 1 : 1.5);
+  const noPayout = !st.stratum.payout_set;
+  pill.hidden = !pending && !noPayout;
+  if (noPayout) setPixelText($('canvas', pill), 'NO PAYOUT ADDRESS · SET IT IN THE LEDGER, SETTINGS', C.amber, narrow() ? 1 : 1.5);
+  else if (pending) setPixelText($('canvas', pill), `BLOCK SUBMITTED · AWAITING NODE CONFIRMATION (${p.blocks_pending})`, C.amber, narrow() ? 1 : 1.5);
 
   // Trophy wall: confirmed blocks only.
   const wall = $('#hud-trophies');
@@ -312,7 +315,9 @@ function renderLedger(st) {
   const addr = st.stratum.payout_address;
   const addrHtml = addr
     ? `<button class="reveal" id="reveal" aria-label="Reveal payout address">${esc(revealed ? addr : maskAddress(addr))}</button>`
-    : '<span>per miner (username is the payout address)</span>';
+    : st.stratum.payout_mode === 'miner'
+      ? '<span>per miner (username is the payout address)</span>'
+      : '<a class="st-orphaned" href="#/ledger/settings">NOT SET: miners are refused until you set it in Settings</a>';
   kv($('#conn-kv'), [
     ['Stratum URL', `<span class="copyable">stratum+tcp://${esc(host)}:${esc(st.stratum.port)}</span>`],
     ['Username', esc(st.stratum.username_format)],
@@ -480,7 +485,9 @@ function route() {
   if (page === 'ledger') {
     if (!chart) chart = new PixelChart($('#chart'));
     if (!settings) settings = new SettingsPanel($('#settings-body'));
-    settings.refresh();
+    settings.refresh().then(() => {
+      if (location.hash === '#/ledger/settings') $('#sec-settings').scrollIntoView();
+    });
     loadHistory();
     if (state) renderLedger(state);
   }

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,16 @@ type fakeBackend struct {
 	d       stratum.DiffSettings
 	updates int
 	resets  int
+	payout  string
+}
+
+func (f *fakeBackend) Payout() (string, bool) { return f.payout, true }
+func (f *fakeBackend) SetPayout(_ context.Context, addr string) (string, error) {
+	if !strings.HasPrefix(addr, "bitcoincash:q") {
+		return "", errors.New("invalid bch main address")
+	}
+	f.payout = addr
+	return addr, nil
 }
 
 func (f *fakeBackend) DiffSettings() (stratum.DiffSettings, bool, bool) {
@@ -196,6 +207,50 @@ func TestCrossOriginRejected(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin login: %d", res.StatusCode)
+	}
+}
+
+func TestPayoutFromSettings(t *testing.T) {
+	s, fb, base := startUI(t, "pw")
+	if st := s.BuildState(10, 10); st.Stratum.PayoutSet {
+		t.Fatal("payout_set before an address was set")
+	}
+	c := newClient(t, base)
+	if code, _ := c.do("PUT", "/api/admin/payout", `{"address":"bitcoincash:qtest"}`, true); code != 401 {
+		t.Fatalf("unauthenticated payout change: %d", code)
+	}
+	if code, _ := c.do("POST", "/api/admin/login", `{"password":"pw"}`, true); code != 200 {
+		t.Fatal("login")
+	}
+	if code, _ := c.do("PUT", "/api/admin/payout", `{"address":"bitcoincash:qtest"}`, false); code != 403 {
+		t.Fatalf("payout change without the CSRF header: %d", code)
+	}
+	if code, m := c.do("PUT", "/api/admin/payout", `{"address":"1BadLegacy"}`, true); code != 400 || m["error"] == nil {
+		t.Fatalf("invalid address accepted: %d %v", code, m)
+	}
+	code, m := c.do("PUT", "/api/admin/payout", `{"address":"bitcoincash:qtest"}`, true)
+	if code != 200 || fb.payout != "bitcoincash:qtest" || m["payout"].(map[string]any)["address"] != "bitcoincash:qtest" {
+		t.Fatalf("payout not set: %d %v", code, m)
+	}
+	if st := s.BuildState(10, 10); !st.Stratum.PayoutSet || st.Stratum.PayoutAddress != "bitcoincash:qtest" {
+		t.Fatalf("state after set: %+v", st.Stratum)
+	}
+}
+
+func TestOriginBehindProxy(t *testing.T) {
+	r, _ := http.NewRequest("POST", "http://wb_web_1:8420/api/admin/login", nil)
+	r.Header.Set("X-WB-Admin", "1")
+	r.Header.Set("Origin", "http://umbrel.local:8420")
+	if sameOrigin(r) {
+		t.Fatal("mismatched origin accepted")
+	}
+	r.Header.Set("X-Forwarded-Host", "umbrel.local:8420")
+	if !sameOrigin(r) {
+		t.Fatal("proxied same-origin request refused")
+	}
+	r.Header.Set("Origin", "http://evil.example")
+	if sameOrigin(r) {
+		t.Fatal("cross-origin accepted behind proxy")
 	}
 }
 

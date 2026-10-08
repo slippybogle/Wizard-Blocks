@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -27,6 +28,12 @@ type SettingsBackend interface {
 	DiffSettings() (s stratum.DiffSettings, saved bool, persistable bool)
 	UpdateDiffSettings(stratum.DiffSettings) error
 	ResetDiffSettings() error
+	// Payout returns the fixed payout address ("" if not set yet) and
+	// whether it can be set from the UI (fixed payout mode).
+	Payout() (addr string, settable bool)
+	// SetPayout verifies the address with the node, saves and applies it,
+	// and returns its canonical form.
+	SetPayout(ctx context.Context, addr string) (string, error)
 }
 
 const (
@@ -93,14 +100,19 @@ func clientIP(r *http.Request) string {
 
 // sameOrigin rejects cross-site requests: mutations must carry our custom
 // header (which a cross-site form cannot set) and, if the browser sends an
-// Origin, it must match the Host.
+// Origin, it must match the Host (or the X-Forwarded-Host set by a reverse
+// proxy such as Umbrel's app_proxy).
 func sameOrigin(r *http.Request) bool {
 	if r.Header.Get("X-WB-Admin") != "1" {
 		return false
 	}
 	if o := r.Header.Get("Origin"); o != "" {
 		u, err := url.Parse(o)
-		if err != nil || u.Host != r.Host {
+		if err != nil {
+			return false
+		}
+		fwd, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Host"), ",")
+		if u.Host != r.Host && (fwd == "" || u.Host != strings.TrimSpace(fwd)) {
 			return false
 		}
 	}
@@ -220,6 +232,32 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	})
+	mux.HandleFunc("/api/admin/payout", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			jsonErr(w, http.StatusUnauthorized, "login required")
+			return
+		}
+		if r.Method != http.MethodPut || !sameOrigin(r) {
+			jsonErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		var body struct {
+			Address string `json:"address"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		addr, err := a.backend.SetPayout(ctx, body.Address)
+		cancel()
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.log.Info("payout address changed from the UI", "ip", clientIP(r), "address", addr)
+		a.writeSettings(w, s)
+	})
 	mux.HandleFunc("/api/admin/settings/reset", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {
 			jsonErr(w, http.StatusUnauthorized, "login required")
@@ -245,8 +283,10 @@ func (a *admin) writeSettings(w http.ResponseWriter, s *Server) {
 		workers = append(workers, wk.Name)
 	}
 	sort.Strings(workers)
+	addr, settable := a.backend.Payout()
 	writeJSON(w, map[string]any{
 		"settings": d, "saved": saved, "persistable": persistable, "workers": workers,
+		"payout": map[string]any{"address": addr, "settable": settable},
 		"limits": map[string]float64{
 			"diff_min": stratum.DiffFloor, "diff_max": stratum.DiffCeiling,
 			"target_min": stratum.MinTargetSeconds, "target_max": stratum.MaxTargetSeconds,

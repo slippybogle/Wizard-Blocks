@@ -24,7 +24,12 @@ func main() {
 		fmt.Println("wizard-blocks", version)
 		return
 	}
-	cfg, err := config.Load(*cfgPath, os.Getenv)
+	env, envFile, err := config.WithEnvFile(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config error:", err)
+		os.Exit(2)
+	}
+	cfg, err := config.Load(*cfgPath, env)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(2)
@@ -35,6 +40,9 @@ func main() {
 		os.Exit(2)
 	}
 	log = log.With("coin", cfg.Coin)
+	if envFile != "" {
+		log.Info("settings overridden from env file", "path", envFile)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

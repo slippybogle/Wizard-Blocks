@@ -4,7 +4,7 @@ Run on 2026-10-08 (Linux amd64, Go 1.24.7, Docker 29.8). Every test
 listed below passed on the final code, including under the race detector (`-race`).
 Reproduce with `go test -race ./...` and `scripts/regtest-test.sh all`.
 
-## Unit tests (`go test -race ./...`): 59 tests, all pass
+## Unit tests (`go test -race ./...`): 63 tests, all pass
 
 | package | what is checked |
 |---|---|
@@ -14,8 +14,8 @@ Reproduce with `go test -race ./...` and `scripts/regtest-test.sh all`.
 | `stratum` | subscribe/configure (mask intersection)/authorize (`d=` password)/submit error codes, malformed JSON, disconnect after repeated garbage, slow client disconnected, message rate limit, per-IP connection limit, oversized line, auth timeout, vardiff convergence from 0.5 TH/s to 2 PH/s, quiet-miner decrease and min clamp, the three version-rolling interpretations, 30 s fuzz of the message handler (no panics). |
 | `stratum` (difficulty) | `DiffSettings` validation (min ≤ max, 1e-12..1e15, target 1–600, FIXED_DIFF within range); `d=` password parsing and clamping; FIXED_DIFF disables vardiff; precedence override > `d=` > FIXED_DIFF > vardiff; live settings re-applied to connected sessions (new difficulty + fresh job). |
 | `work` (submit) | `TestBlockAnnouncedOnce`: one accepted block logs `BLOCK ACCEPTED` exactly once, even when verified repeatedly. |
-| `node`, `stats`, `config` | ZMTP framing/metadata limits; hashrate windows; `pending` blocks not counted as found; Prometheus output; persistence round-trip; per-job rounds; luck resets only when a block is found (not on new jobs); config env overrides and validation (difficulty env, stratum public port, `WB_UI_LISTEN=off`). |
-| `ui` | Settings auth: disabled without a password, login/logout flow, tampered cookie refused, login rate limit (5 failures / 5 min), cross-origin and header-less writes refused, settings absent from the stratum/stats ports. Static files and `/api/state`. Creature tiers at the exact cutoffs (50 / 63.3 / 76.7 / 90 / 100 %), a share ≥ 100 % or a found block is Block tier (never Legendary). Luck-since-last-block percentage. Every character the UI renders has a pixel-font glyph. |
+| `node`, `stats`, `config` | ZMTP framing/metadata limits; hashrate windows; `pending` blocks not counted as found; Prometheus output; persistence round-trip; per-job rounds; luck resets only when a block is found (not on new jobs); config env overrides and validation (difficulty env, stratum public port, `WB_UI_LISTEN=off`, empty payout allowed only with a UI admin password, `WB_ENV_FILE` overrides). |
+| `ui` | Settings auth: disabled without a password, login/logout flow, tampered cookie refused, login rate limit (5 failures / 5 min), cross-origin and header-less writes refused, settings absent from the stratum/stats ports. Static files and `/api/state`. Creature tiers at the exact cutoffs (50 / 63.3 / 76.7 / 90 / 100 %), a share ≥ 100 % or a found block is Block tier (never Legendary). Luck-since-last-block percentage. Every character the UI renders has a pixel-font glyph. Payout address from Settings: login and CSRF header required, invalid address refused, `payout_set` in the state. Same-origin check behind a reverse proxy (`X-Forwarded-Host`). |
 
 ## Regtest integration harness (`test/integration`, Docker)
 
@@ -100,6 +100,24 @@ Smoke-tested in this environment: Bitcoin Core 28.1 on testnet4, the engine
 validated a node-generated `tb1q…` address, bound stratum 3336 and stats
 127.0.0.1:8091 with the UI off, and entered "waiting for node to sync".
 **Not tested here:** syncing testnet4 and mining a real block (no P2P internet).
+
+## Umbrel community app (simulated)
+
+`slippybogle-wizard-blocks/docker-compose.yml` was run unchanged with Docker,
+plus a stand-in for umbrelOS: the exported `APP_BITCOIN_CASH_NODE_*` variables,
+`APP_PASSWORD`, `APP_DATA_DIR` (owned by uid 1000) and two BCHN 29.2.0 regtest
+nodes at the Umbrel IP `10.21.21.50`. Checked:
+
+- the engine connects over RPC and ZMQ using only the exported variables;
+- with no payout address, `mining.authorize` is refused and no job is sent;
+- Settings login with `APP_PASSWORD`; a wrong-network address is refused; a valid
+  one is saved to `/data/payout-bch.json`, then the miner gets `set_difficulty` and `notify`;
+- after recreating the container the saved payout is used again;
+- with the RPC password missing from the environment, `/data/override.env` supplies it;
+- the stats API listens on `127.0.0.1` inside the container only.
+
+The image builds for `linux/amd64` and `linux/arm64`. Not tested: a real
+umbrelOS device and its `app_proxy`.
 
 ## Web UI (manual)
 

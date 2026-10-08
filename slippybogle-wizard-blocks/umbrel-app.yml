@@ -1,0 +1,37 @@
+manifestVersion: 1
+id: slippybogle-wizard-blocks
+category: crypto
+name: Wizard Blocks (BCH)
+version: "1.0.0"
+tagline: Solo-mine Bitcoin Cash on your own node, with a pixel-art wizard
+icon: https://raw.githubusercontent.com/slippybogle/Wizard-Blocks/main/slippybogle-wizard-blocks/icon.svg
+description: >-
+  Wizard Blocks is a self-hosted solo-mining Stratum V1 server for Bitcoin Cash.
+  It talks to your Bitcoin Cash Node app over RPC and ZMQ, and 100% of every
+  block reward plus fees goes to your own payout address.
+
+
+  Point your Bitaxe, NerdQaxe or ASIC at umbrel.local:62023. The web UI shows a
+  16-bit mine where a wizard digs for blocks (The Mine) and all the details
+  (The Ledger): hashrate, workers, shares, odds, found blocks and settings.
+
+
+  On first run, open the app, go to The Ledger, Settings, log in with the
+  password shown by Umbrel, and set your CashAddr payout address. No work is
+  issued to miners until it is set and verified by your node.
+releaseNotes: >-
+  First release: BCH mainnet solo mining on Stratum port 62023, web UI behind
+  the Umbrel login, payout address and difficulty set from Settings.
+developer: slippybogle
+website: https://github.com/slippybogle/Wizard-Blocks
+dependencies:
+  - bitcoin-cash-node
+repo: https://github.com/slippybogle/Wizard-Blocks
+support: https://github.com/slippybogle/Wizard-Blocks/issues
+port: 8420
+gallery: []
+path: ""
+defaultUsername: ""
+deterministicPassword: true
+submitter: slippybogle
+submission: https://github.com/slippybogle/Wizard-Blocks

@@ -319,6 +319,7 @@ type StratumInfo struct {
 	Port            int                   `json:"port"`
 	PayoutMode      string                `json:"payout_mode"`
 	PayoutAddress   string                `json:"payout_address,omitempty"`
+	PayoutSet       bool                  `json:"payout_set"` // false: no work is issued until it is set
 	UsernameFormat  string                `json:"username_format"`
 	Extranonce2Size int                   `json:"extranonce2_size"`
 	VersionMask     string                `json:"version_rolling_mask"`
@@ -349,7 +350,11 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 	if s.admin.backend != nil {
 		d, _, _ := s.admin.backend.DiffSettings()
 		st.Stratum.Difficulty = &d
+		if addr, settable := s.admin.backend.Payout(); settable {
+			st.Stratum.PayoutAddress = addr
+		}
 	}
+	st.Stratum.PayoutSet = s.cfg.PayoutMode == "miner" || st.Stratum.PayoutAddress != ""
 	if st.Workers == nil {
 		st.Workers = []stats.WorkerSnapshot{}
 	}

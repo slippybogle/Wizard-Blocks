@@ -36,7 +36,9 @@ type Engine struct {
 	settingsMu sync.Mutex
 	baseDiff   stratum.DiffSettings // from config/env
 	net        *address.Network
-	fixed      *stratum.Payout
+
+	payoutMu sync.RWMutex
+	fixed    *stratum.Payout // nil in fixed mode until a payout address is set
 
 	cacheMu sync.Mutex
 	cache   map[string]*stratum.Payout
@@ -145,7 +147,10 @@ func (e *Engine) ValidatePayout(ctx context.Context, addr string) (*stratum.Payo
 // resolve implements stratum.PayoutResolver.
 func (e *Engine) resolve(ctx context.Context, username string) (*stratum.Payout, error) {
 	if e.cfg.Payout.Mode == "fixed" {
-		return e.fixed, nil
+		if p := e.fixedPayout(); p != nil {
+			return p, nil
+		}
+		return nil, errNoPayout
 	}
 	addr, _, _ := strings.Cut(strings.TrimSpace(username), ".")
 	e.cacheMu.Lock()
@@ -185,10 +190,9 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.st.SetNode(func(n *stats.NodeStatus) { n.Subversion, n.Chain, n.Connected = ni.Subversion, ci.Chain, true })
 
 	if e.cfg.Payout.Mode == "fixed" {
-		if e.fixed, err = e.ValidatePayout(ctx, e.cfg.Payout.Address); err != nil {
-			return fmt.Errorf("payout address: %w", err)
+		if err := e.initPayout(ctx); err != nil {
+			return err
 		}
-		e.log.Info("payout address verified", "address", e.fixed.Address, "script", hex.EncodeToString(e.fixed.Script))
 	} else if e.cfg.Payout.Address != "" {
 		return errors.New("payout.address must be empty in miner mode (each miner's username is its payout address)")
 	}
@@ -239,14 +243,10 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("api listen: %w", err)
 	}
 	if e.cfg.UI.Listen != "" {
-		payout := ""
-		if e.fixed != nil {
-			payout = e.fixed.Address
-		}
 		e.ui = ui.New(ui.Config{
 			Coin: e.cfg.Coin, Version: e.ver, StratumPort: e.cfg.StratumPort(), PayoutMode: e.cfg.Payout.Mode,
-			PayoutAddress: payout, Extranonce2Size: e.cfg.Stratum.Extranonce2Size,
-			VersionMask: e.cfg.Stratum.VersionRollingMask, DataDir: e.cfg.DataDir,
+			Extranonce2Size: e.cfg.Stratum.Extranonce2Size,
+			VersionMask:     e.cfg.Stratum.VersionRollingMask, DataDir: e.cfg.DataDir,
 			AdminPassword: e.cfg.UI.AdminPassword,
 		}, e.st, e.rpc, e.log)
 		e.ui.SetSettingsBackend(e)

@@ -249,8 +249,11 @@ func (c *Config) Validate() error {
 	}
 	switch c.Payout.Mode {
 	case "fixed":
-		if strings.TrimSpace(c.Payout.Address) == "" {
-			add("payout.address is required in fixed mode")
+		// Without an address the engine can still start when the payout
+		// address can be set from the password-protected web UI; it issues
+		// no work until then.
+		if strings.TrimSpace(c.Payout.Address) == "" && (c.UI.Listen == "" || c.UI.AdminPassword == "") {
+			add("payout.address is required in fixed mode (or enable the web UI with an admin password and set it there)")
 		}
 	case "miner":
 	default:

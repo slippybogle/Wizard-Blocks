@@ -62,7 +62,7 @@ export class SettingsPanel {
   renderLogin(message) {
     this.root.innerHTML = `
       <form class="form" id="login-form" autocomplete="on">
-        <p class="note">Difficulty settings are protected. Log in with the UI admin password.</p>
+        <p class="note">Settings (payout address and difficulty) are protected. Log in with the UI admin password.</p>
         <div class="form-row"><div class="field">
           <label for="admin-pw">Admin password</label>
           <input id="admin-pw" type="password" autocomplete="current-password" required>
@@ -81,10 +81,19 @@ export class SettingsPanel {
   }
 
   renderForm(message, isError) {
-    const { settings: d, limits, saved, persistable, workers } = this.data;
+    const { settings: d, limits, saved, persistable, workers, payout } = this.data;
     const ovr = Object.entries(d.worker_overrides || {});
     const opts = workers.map((w) => `<option value="${esc(w)}"></option>`).join('');
-    this.root.innerHTML = `
+    const payoutHtml = payout && payout.settable ? `
+      <form class="form" id="payout-form" novalidate>
+        <div class="field"><label for="payout-addr">Payout address (CashAddr)</label>
+          <input id="payout-addr" type="text" value="${esc(payout.address)}" placeholder="bitcoincash:q…" spellcheck="false" autocapitalize="off" autocomplete="off">
+          <small>${payout.address ? '100% of every block reward goes here. Changing it reconnects all miners.'
+            : '<b>Not set.</b> Miners are refused (no work is issued) until you set it.'} Checked by the engine and by your node.</small></div>
+        <div class="btn-row"><button type="submit" class="btn primary">Verify &amp; save address</button>
+        <span class="msg" id="payout-msg" role="status"></span></div>
+      </form>` : '';
+    this.root.innerHTML = payoutHtml + `
       <form class="form" id="settings-form" novalidate>
         <p class="note">Changes apply to connected miners immediately (new difficulty + fresh job) and are
         ${persistable ? 'saved to disk; saved values override the config/env on restart' : '<b>not</b> saved: no data directory is configured'}.
@@ -106,6 +115,8 @@ export class SettingsPanel {
           <span class="msg ${isError ? 'err' : 'ok'}" id="settings-msg" role="status">${esc(message || '')}</span>
         </div>
       </form>`;
+    const pform = this.root.querySelector('#payout-form');
+    if (pform) pform.addEventListener('submit', (e) => { e.preventDefault(); this.savePayout(pform); });
     const form = this.root.querySelector('#settings-form');
     const list = form.querySelector('#ovr-list');
     form.querySelector('#ovr-add').onclick = () => list.insertAdjacentHTML('beforeend', ovrRow('', ''));
@@ -145,6 +156,23 @@ export class SettingsPanel {
     const r = await api('PUT', 'api/admin/settings', d);
     btn.disabled = false;
     if (r.ok) { this.data = r.data; this.renderForm('Applied to all connected miners' + (r.data.persistable ? ' and saved.' : ' (not saved: no data dir).')); } else this.handleError(r);
+  }
+
+  async savePayout(form) {
+    const addr = form.querySelector('#payout-addr').value.trim();
+    const msg = form.querySelector('#payout-msg');
+    if (!addr) { msg.className = 'msg err'; msg.textContent = 'Enter a payout address.'; return; }
+    const btn = form.querySelector('button');
+    btn.disabled = true;
+    msg.className = 'msg'; msg.textContent = 'Checking with the node…';
+    const r = await api('PUT', 'api/admin/payout', { address: addr });
+    btn.disabled = false;
+    if (r.status === 401) { this.renderLogin('Session expired; log in again.'); return; }
+    if (!r.ok) { msg.className = 'msg err'; msg.textContent = r.data.error || `Error ${r.status}`; return; }
+    this.data = r.data;
+    this.renderForm();
+    const m2 = this.root.querySelector('#payout-msg');
+    if (m2) { m2.className = 'msg ok'; m2.textContent = 'Saved. Miners are reconnecting with the new address.'; }
   }
 
   handleError(r) {

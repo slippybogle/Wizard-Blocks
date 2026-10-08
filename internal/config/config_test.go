@@ -28,6 +28,21 @@ func TestDefaultsNeedPayoutAndAuth(t *testing.T) {
 	}
 }
 
+func TestPayoutFromUI(t *testing.T) {
+	base := map[string]string{"WB_RPC_USER": "u", "WB_RPC_PASSWORD": "p", "WB_COIN": "bch"}
+	if _, err := Load("", env(base)); err == nil {
+		t.Fatal("empty payout accepted without a UI admin password")
+	}
+	base["WB_UI_ADMIN_PASSWORD"] = "pw"
+	if _, err := Load("", env(base)); err != nil {
+		t.Fatalf("empty payout with UI settings refused: %v", err)
+	}
+	base["WB_UI_LISTEN"] = "off"
+	if _, err := Load("", env(base)); err == nil {
+		t.Fatal("empty payout accepted with the UI off")
+	}
+}
+
 func TestFileAndValidation(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "c.json")
@@ -122,5 +137,27 @@ func TestUIOff(t *testing.T) {
 	c, err := Load("", env(map[string]string{"WB_RPC_USER": "u", "WB_PAYOUT_ADDRESS": "x", "WB_UI_LISTEN": "off"}))
 	if err != nil || c.UI.Listen != "" {
 		t.Fatalf("WB_UI_LISTEN=off: %q %v", c.UI.Listen, err)
+	}
+}
+
+func TestEnvFileOverrides(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "override.env")
+	os.WriteFile(p, []byte("# node fallback\nWB_RPC_URL=http://10.0.0.5:8332\nexport WB_RPC_PASSWORD=\"s3cret\"\n"), 0o600)
+	base := map[string]string{"WB_ENV_FILE": p, "WB_RPC_URL": "http://x:1", "WB_RPC_USER": "u"}
+	env, used, err := WithEnvFile(func(k string) string { return base[k] })
+	if err != nil || used != p {
+		t.Fatal(used, err)
+	}
+	if env("WB_RPC_URL") != "http://10.0.0.5:8332" || env("WB_RPC_PASSWORD") != "s3cret" || env("WB_RPC_USER") != "u" {
+		t.Fatal("override not applied")
+	}
+	base["WB_ENV_FILE"] = filepath.Join(t.TempDir(), "missing.env")
+	if _, used, err := WithEnvFile(func(k string) string { return base[k] }); err != nil || used != "" {
+		t.Fatal("missing file should be ignored", err)
+	}
+	os.WriteFile(p, []byte("PATH=/evil\n"), 0o600)
+	base["WB_ENV_FILE"] = p
+	if _, _, err := WithEnvFile(func(k string) string { return base[k] }); err == nil {
+		t.Fatal("non-WB_ key accepted")
 	}
 }

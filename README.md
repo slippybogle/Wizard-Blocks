@@ -11,6 +11,7 @@ UI with two pages: **The Mine** and **The Ledger**.
 
 - Design and data flow: [docs/DESIGN.md](docs/DESIGN.md)
 - What is tested and the results: [docs/TESTING.md](docs/TESTING.md)
+- **Install on Umbrel (BCH mainnet, community app)**: [docs/INSTALL-UMBREL.md](docs/INSTALL-UMBREL.md)
 - BCH testnet on Umbrel: [deploy/bch-testnet/README.md](deploy/bch-testnet/README.md)
 - BTC testnet4 on Umbrel: [deploy/btc-testnet/README.md](deploy/btc-testnet/README.md)
 
@@ -105,7 +106,8 @@ UI with two pages: **The Mine** and **The Ledger**.
 
 3. Open the UI at `http://<host>:8420`.
 
-For Umbrel / compose, see [deploy/docker-compose.umbrel.yml](deploy/docker-compose.umbrel.yml).
+On Umbrel, install the community app instead: [docs/INSTALL-UMBREL.md](docs/INSTALL-UMBREL.md).
+For a manual compose stack, see [deploy/docker-compose.umbrel.yml](deploy/docker-compose.umbrel.yml).
 It maps host port `STRATUM_PORT` (default **62023**) to the engine's port 62023 and
 UI port `UI_PORT` (default 8420). The BTC engine sits behind the `btc` profile
 (`docker compose --profile btc up -d`); its Stratum is on host port
@@ -144,6 +146,9 @@ always capped at the network difficulty, so a block-solving share is never withh
 
 ### Live settings (The Ledger → Settings)
 
+- Set the payout address (fixed mode). It is verified locally and by the node,
+  saved to `<data_dir>/payout-<coin>.json` (overrides `WB_PAYOUT_ADDRESS`), and all
+  miners reconnect to pick it up.
 - Edit VARDIFF_MIN, VARDIFF_MAX, VARDIFF_TARGET_SECONDS, FIXED_DIFF and per-worker
   overrides. Changes apply to connected miners immediately (new difficulty plus a fresh job).
 - Changes are validated: min ≤ max, values within 1e-12..1e15, target 1–600 s, FIXED_DIFF within min..max.
@@ -168,7 +173,7 @@ example: [deploy/config.example.bch.json](deploy/config.example.bch.json).
 | `WB_ZMQ_HASHBLOCK` | empty (poll only) | e.g. `tcp://127.0.0.1:28332` |
 | `WB_POLL_INTERVAL_MS` / `WB_TEMPLATE_REFRESH_S` | 1000 / 30 | tip polling, mempool refresh |
 | `WB_PAYOUT_MODE` | `fixed` | `fixed` (one address) or `miner` (username = address) |
-| `WB_PAYOUT_ADDRESS` | — | required in `fixed` mode |
+| `WB_PAYOUT_ADDRESS` | — | required in `fixed` mode, unless the UI has an admin password: then it can be set in Settings (no work is issued until it is) |
 | `WB_COINBASE_TAG` | `/wizard-blocks/` | ≤ 60 bytes |
 | `WB_STRATUM_LISTEN` | `0.0.0.0:62023` | Stratum listener |
 | `WB_STRATUM_PUBLIC_PORT` | listen port | port shown to miners in the UI, if Docker maps a different host port |
@@ -180,6 +185,7 @@ example: [deploy/config.example.bch.json](deploy/config.example.bch.json).
 | `WB_UI_ADMIN_PASSWORD` | empty | enables the Settings page |
 | `WB_API_LISTEN` / `WB_PROMETHEUS` | `127.0.0.1:8080` / true | stats JSON / metrics |
 | `WB_LOG_LEVEL` / `WB_LOG_FORMAT` | `info` / `json` | |
+| `WB_ENV_FILE` | empty | file of `WB_*=value` lines that override the environment (missing file is ignored) |
 | `WB_DATA_DIR` | empty | persists blocks, best share, luck, hashrate history and saved settings |
 
 ## APIs

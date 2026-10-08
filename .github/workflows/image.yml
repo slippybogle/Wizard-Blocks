@@ -1,0 +1,50 @@
+name: image
+
+# Builds the multi-arch (amd64 + arm64) image used by the Umbrel app and
+# pushes it to ghcr.io/slippybogle/wizard-blocks:<version>.
+# Run it by pushing a tag like v1.0.0, or manually from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version (e.g. 1.0.0)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+      - run: go test ./...
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: v
+        run: |
+          v="${{ github.event.inputs.version }}"
+          [ -n "$v" ] || v="${GITHUB_REF_NAME#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ steps.v.outputs.version }}
+          tags: ghcr.io/slippybogle/wizard-blocks:${{ steps.v.outputs.version }}
+          labels: org.opencontainers.image.source=https://github.com/slippybogle/Wizard-Blocks
+      - name: Digest to pin in slippybogle-wizard-blocks/docker-compose.yml
+        run: echo "ghcr.io/slippybogle/wizard-blocks:${{ steps.v.outputs.version }}@${{ steps.push.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"

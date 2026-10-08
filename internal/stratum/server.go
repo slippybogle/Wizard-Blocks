@@ -211,6 +211,14 @@ func (s *Server) Close() {
 	s.wg.Wait()
 }
 
+// DropAll disconnects every miner (they reconnect and re-authorize) while
+// the listener keeps running.
+func (s *Server) DropAll(reason string) {
+	for _, sess := range s.snapshotSessions() {
+		sess.close(reason)
+	}
+}
+
 func (s *Server) snapshotSessions() []*Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
