@@ -164,6 +164,7 @@ func engineConfig(n *Node, coin string) config.Config {
 	c.Vardiff.Initial = 1
 	c.Stratum.MsgRatePerS = 2000
 	c.Stratum.MsgBurst = 5000
+	c.Stratum.MaxConnsPerIP = 256 // all harness clients share 127.0.0.1
 	return c
 }
 

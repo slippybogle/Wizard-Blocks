@@ -44,7 +44,8 @@ func TestRegtestBTCNoSignal(t *testing.T) {
 // payout form, and an empty coinbase tag so the 100-byte minimum
 // transaction size padding is exercised.
 func TestRegtestBCH(t *testing.T) {
-	runCoin(t, suite{coin: "bch", phaseA: 350, perVariant: 22, nTx: 1000, nodeRestart: true, emptyTagPhaseB: true, minBlocks: 500})
+	runCoin(t, suite{coin: "bch", phaseA: 350, perVariant: 22, nTx: 1000, nodeRestart: true, emptyTagPhaseB: true,
+		concurrent: true, minBlocks: 500})
 }
 
 // suite parameterises runCoin.
@@ -56,6 +57,7 @@ type suite struct {
 	perVariant     int // blocks per payout variant in phase B (default 12)
 	nTx            int // wallet transactions to put in one template (default 300)
 	nodeRestart    bool
+	concurrent     bool
 	emptyTagPhaseB bool
 	minBlocks      int // default 200
 }
@@ -257,6 +259,9 @@ func runCoin(t *testing.T, cfg suite) {
 
 	var expectNonAccepted map[string][]string // hash -> allowed statuses
 	t.Run("ProtocolAndInvalidShares", func(t *testing.T) { expectNonAccepted = testProtocol(t, enA, a, rec, &external) })
+	if cfg.concurrent {
+		t.Run("ConcurrentMiners", func(t *testing.T) { testConcurrent(t, enA, a, rec, expectNonAccepted) })
+	}
 
 	// ZMQ must have been the primary new-block signal in phase A.
 	if s := enA.E.Stats().Snapshot(); !s.Node.ZMQConnected || s.Node.ZMQMessages < 100 {
@@ -974,3 +979,72 @@ func testNodeRestart(t *testing.T, en *Engine, a *Node, rec *recorder) {
 	}
 	t.Logf("node restart survived; %d blocks mined afterwards", en.acceptedBlocks()-before)
 }
+
+// testConcurrent opens 100 idle sessions and runs 4 miners at once. Every
+// idle session must receive each new block's clean job; competing miners
+// may race at the same height (losers end orphaned/stale, never counted).
+func testConcurrent(t *testing.T, en *Engine, a *Node, rec *recorder, nonAccepted map[string][]string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	var idle []*testminer.Client
+	for i := 0; i < 100; i++ {
+		c, err := testminer.Dial(en.E.StratumAddr())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if err := c.Subscribe(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := c.Authorize(ctx, fmt.Sprintf("idle%d", i), "x"); err != nil || !r.OK() {
+			t.Fatalf("authorize idle%d", i)
+		}
+		idle = append(idle, c)
+	}
+	before := en.acceptedBlocks()
+	var miners []*miner
+	for i := 0; i < 4; i++ {
+		miners = append(miners, startMiner(t, en, rec, fmt.Sprintf("conc%d", i), []string{"bip310", "xor", "or", "bip310"}[i]))
+	}
+	mineUntil(t, en, before+40, 3*time.Minute)
+	for _, m := range miners {
+		m.stop(t)
+	}
+	waitFor(t, "verifications finished", 30*time.Second, func() bool {
+		for _, b := range en.E.Stats().Blocks() {
+			if b.Status == "pending" {
+				return false
+			}
+		}
+		return true
+	})
+	var best string
+	a.call(t, a.RPC, "getbestblockhash", &best)
+	bestH, _ := bitcoin.HashFromDisplay(best)
+	waitFor(t, "all idle sessions on the current tip", 10*time.Second, func() bool {
+		for _, c := range idle {
+			_, _, _, _, j := c.State()
+			if j == nil || !bytes.Equal(j.PrevHash, prevHashHeaderBytes(bestH)) {
+				return false
+			}
+		}
+		return true
+	})
+	if n := en.E.Stats().Snapshot().Pool.Connections; n < 100 {
+		t.Fatalf("only %d connections open", n)
+	}
+	lost := 0
+	for _, b := range en.E.Stats().Blocks() {
+		if strings.HasPrefix(b.Worker, "conc") && b.Status != "accepted" {
+			if b.Status != "orphaned" && b.Status != "stale" {
+				t.Errorf("concurrent block %s status %s", b.Hash, b.Status)
+			}
+			nonAccepted[b.Hash] = []string{"orphaned", "stale"}
+			lost++
+		}
+	}
+	t.Logf("100 idle sessions tracked every tip; 4 miners found %d blocks (%d lost same-height races)", en.acceptedBlocks()-before, lost)
+}
+
+// prevHashHeaderBytes is the header-order prevhash the miner reconstructs.
+func prevHashHeaderBytes(h bitcoin.Hash) []byte { return h[:] }
