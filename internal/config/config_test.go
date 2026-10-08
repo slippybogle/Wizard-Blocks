@@ -65,3 +65,40 @@ func TestFileAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestDifficultyEnv(t *testing.T) {
+	base := map[string]string{"WB_RPC_USER": "u", "WB_PAYOUT_ADDRESS": "x"}
+	with := func(kv map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range kv {
+			m[k] = v
+		}
+		return m
+	}
+	c, err := Load("", env(with(map[string]string{
+		"WB_VARDIFF_MIN": "16", "WB_VARDIFF_MAX": "65536", "WB_VARDIFF_TARGET_SECONDS": "15",
+		"WB_VARDIFF_TARGET_SHARE_S": "99", "WB_FIXED_DIFF": "512", "WB_VARDIFF_INITIAL": "64",
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Vardiff.Min != 16 || c.Vardiff.Max != 65536 || c.Vardiff.TargetShareS != 15 || c.Vardiff.FixedDiff != 512 {
+		t.Fatalf("difficulty env not applied: %+v", c.Vardiff)
+	}
+	for _, bad := range []map[string]string{
+		{"WB_FIXED_DIFF": "4", "WB_VARDIFF_MIN": "16"},     // fixed below min
+		{"WB_FIXED_DIFF": "1e9", "WB_VARDIFF_MAX": "1000"}, // fixed above max
+		{"WB_VARDIFF_TARGET_SECONDS": "0"},
+		{"WB_VARDIFF_TARGET_SECONDS": "601"},
+		{"WB_VARDIFF_MIN": "100", "WB_VARDIFF_MAX": "10"},
+		{"WB_VARDIFF_MAX": "1e16"},
+		{"WB_FIXED_DIFF": "abc"},
+	} {
+		if _, err := Load("", env(with(bad))); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+}

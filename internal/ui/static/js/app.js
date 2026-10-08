@@ -1,6 +1,7 @@
 import { Scene } from './scene.js';
 import { Sound } from './audio.js';
 import { PixelChart } from './chart.js';
+import { SettingsPanel } from './settings.js';
 import { setPixelText, pixelizeHeadings } from './font.js';
 import { blockEvents, shareDelta, finishedRound } from './events.js';
 import {
@@ -180,6 +181,7 @@ function renderHUD(st) {
 
 // ---------- ledger ----------
 let chart;
+let settings;
 let range = store.get('range', '1h');
 let revealed = false;
 
@@ -229,7 +231,8 @@ function renderLedger(st) {
   kv($('#conn-kv'), [
     ['Stratum URL', `<span class="copyable">stratum+tcp://${esc(host)}:${esc(st.stratum.port)}</span>`],
     ['Username', esc(st.stratum.username_format)],
-    ['Password', 'x (or d=&lt;start difficulty&gt;)'],
+    ['Password', 'x, or d=&lt;difficulty&gt; to pin this miner'],
+    ['Difficulty', esc(diffMode(st.stratum.difficulty))],
     ['Payout', addrHtml],
   ]);
   const btn = $('#reveal');
@@ -276,6 +279,13 @@ function renderLedger(st) {
     cell.append(document.createTextNode(r.creature));
     tbody.append(tr);
   }
+}
+
+function diffMode(d) {
+  if (!d) return 'vardiff';
+  const base = d.fixed_diff > 0 ? `fixed ${fmtDiff(d.fixed_diff)}` : `vardiff ${fmtDiff(d.vardiff_min)}–${fmtDiff(d.vardiff_max)}, ${d.vardiff_target_seconds}s/share`;
+  const n = Object.keys(d.worker_overrides || {}).length;
+  return base + (n ? ` · ${n} worker override${n > 1 ? 's' : ''}` : '');
 }
 
 async function loadHistory() {
@@ -352,6 +362,8 @@ function route() {
   if (page === 'mine') { scene.resize(); scene.start(); } else { scene.stop(); }
   if (page === 'ledger') {
     if (!chart) chart = new PixelChart($('#chart'));
+    if (!settings) settings = new SettingsPanel($('#settings-body'));
+    settings.refresh();
     loadHistory();
     if (state) renderLedger(state);
   }

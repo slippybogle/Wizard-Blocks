@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/slippybogle/wizard-blocks/internal/bitcoin"
@@ -60,6 +61,8 @@ type Server struct {
 	en1Next  uint32
 	closing  bool
 
+	diffs atomic.Pointer[DiffSettings]
+
 	dupMu sync.Mutex
 	dups  map[uint64]map[bitcoin.Hash]struct{} // generation -> header hashes
 
@@ -76,8 +79,30 @@ func NewServer(cfg Config, mgr *work.Manager, resolve PayoutResolver, st *stats.
 		en1Next: binary.BigEndian.Uint32(seed[:]),
 		dups:    map[uint64]map[bitcoin.Hash]struct{}{},
 	}
+	ds := DiffSettings{Min: cfg.Vardiff.Min, Max: cfg.Vardiff.Max, TargetSeconds: cfg.Vardiff.TargetShare.Seconds(),
+		FixedDiff: cfg.Vardiff.FixedDiff, Overrides: map[string]float64{}}
+	s.diffs.Store(&ds)
 	mgr.OnWork(s.broadcast)
 	return s
+}
+
+// DiffSettings returns a copy of the live difficulty settings.
+func (s *Server) DiffSettings() DiffSettings { return s.diffs.Load().Clone() }
+
+// SetDiffSettings validates and applies new difficulty settings to every
+// connected miner immediately (set_difficulty + re-notified work).
+func (s *Server) SetDiffSettings(d DiffSettings) error {
+	d = d.Clone()
+	if err := d.Validate(); err != nil {
+		return err
+	}
+	s.diffs.Store(&d)
+	for _, sess := range s.snapshotSessions() {
+		sess.reapplyDiff()
+	}
+	s.log.Info("difficulty settings applied", "min", d.Min, "max", d.Max, "target_s", d.TargetSeconds,
+		"fixed", d.FixedDiff, "overrides", len(d.Overrides))
+	return nil
 }
 
 // Listen binds the listening socket.

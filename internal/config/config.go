@@ -50,7 +50,8 @@ type Vardiff struct {
 	Initial      float64 `json:"initial"`
 	Min          float64 `json:"min"`
 	Max          float64 `json:"max"`
-	TargetShareS float64 `json:"target_share_s"`
+	TargetShareS float64 `json:"target_share_s"` // a.k.a. VARDIFF_TARGET_SECONDS
+	FixedDiff    float64 `json:"fixed_diff"`     // > 0 disables vardiff (FIXED_DIFF)
 	RetargetS    float64 `json:"retarget_s"`
 	VariancePct  float64 `json:"variance_pct"`
 }
@@ -64,6 +65,8 @@ type API struct {
 // UI configures the embedded web interface.
 type UI struct {
 	Listen string `json:"listen"` // "" disables the UI
+	// AdminPassword protects the Settings section. Empty = settings read-only.
+	AdminPassword string `json:"admin_password"`
 }
 
 // Log configures logging.
@@ -133,7 +136,7 @@ func (c *Config) applyEnv(env func(string) string) error {
 		"WB_PAYOUT_ADDRESS": &c.Payout.Address, "WB_COINBASE_TAG": &c.Payout.CoinbaseTag,
 		"WB_STRATUM_LISTEN": &c.Stratum.Listen, "WB_VERSION_ROLLING_MASK": &c.Stratum.VersionRollingMask,
 		"WB_API_LISTEN": &c.API.Listen, "WB_LOG_LEVEL": &c.Log.Level, "WB_LOG_FORMAT": &c.Log.Format,
-		"WB_DATA_DIR": &c.DataDir, "WB_UI_LISTEN": &c.UI.Listen,
+		"WB_DATA_DIR": &c.DataDir, "WB_UI_LISTEN": &c.UI.Listen, "WB_UI_ADMIN_PASSWORD": &c.UI.AdminPassword,
 	}
 	for k, p := range str {
 		if v, ok := lookup(env, k); ok {
@@ -157,6 +160,7 @@ func (c *Config) applyEnv(env func(string) string) error {
 	floats := map[string]*float64{
 		"WB_VARDIFF_INITIAL": &c.Vardiff.Initial, "WB_VARDIFF_MIN": &c.Vardiff.Min,
 		"WB_VARDIFF_MAX": &c.Vardiff.Max, "WB_VARDIFF_TARGET_SHARE_S": &c.Vardiff.TargetShareS,
+		"WB_FIXED_DIFF": &c.Vardiff.FixedDiff,
 	}
 	for k, p := range floats {
 		if v, ok := lookup(env, k); ok {
@@ -166,6 +170,15 @@ func (c *Config) applyEnv(env func(string) string) error {
 			}
 			*p = f
 		}
+	}
+	// WB_VARDIFF_TARGET_SECONDS is the documented name; it wins over the
+	// older WB_VARDIFF_TARGET_SHARE_S when both are set.
+	if v, ok := lookup(env, "WB_VARDIFF_TARGET_SECONDS"); ok {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return fmt.Errorf("WB_VARDIFF_TARGET_SECONDS: %w", err)
+		}
+		c.Vardiff.TargetShareS = f
 	}
 	if v, ok := lookup(env, "WB_PROMETHEUS"); ok {
 		b, err := strconv.ParseBool(v)
@@ -261,8 +274,14 @@ func (c *Config) Validate() error {
 	if !(v.Min > 0) || !(v.Max >= v.Min) || v.Initial < v.Min || v.Initial > v.Max {
 		add("vardiff requires 0 < min <= initial <= max")
 	}
-	if v.TargetShareS <= 0 || v.RetargetS <= 0 || v.VariancePct < 0 {
-		add("vardiff target_share_s/retarget_s must be positive")
+	if v.TargetShareS < 1 || v.TargetShareS > 600 || v.RetargetS <= 0 || v.VariancePct < 0 {
+		add("vardiff target_share_s (VARDIFF_TARGET_SECONDS) must be 1..600 and retarget_s positive")
+	}
+	if v.Min < 1e-12 || v.Max > 1e15 {
+		add("vardiff min/max must be within 1e-12..1e15")
+	}
+	if v.FixedDiff != 0 && (v.FixedDiff < v.Min || v.FixedDiff > v.Max) {
+		add("vardiff fixed_diff (FIXED_DIFF) must be 0 or within min..max")
 	}
 	for name, addr := range map[string]string{"stratum.listen": c.Stratum.Listen, "api.listen": c.API.Listen, "ui.listen": c.UI.Listen} {
 		if addr == "" && name == "ui.listen" {

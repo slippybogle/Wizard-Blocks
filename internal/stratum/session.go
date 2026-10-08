@@ -92,6 +92,7 @@ type Session struct {
 	jobs        map[string]sessJob
 	jobOrder    []string
 	vd          *vardiff
+	pwDiff      float64 // miner's own "d=" password difficulty (0 = none)
 	lastWork    *work.Work
 }
 
@@ -102,7 +103,7 @@ func newSession(s *Server, conn net.Conn, ip string, en1 uint32) *Session {
 		out: make(chan []byte, 64), done: make(chan struct{}),
 		tokens: s.cfg.MsgBurst, tokensAt: time.Now(),
 		workers: map[string]bool{}, jobs: map[string]sessJob{},
-		diff: s.cfg.Vardiff.Initial,
+		diff: s.diffs.Load().Clamp(s.cfg.Vardiff.Initial),
 		vd:   newVardiff(s.cfg.Vardiff, time.Now()),
 	}
 }
@@ -343,9 +344,14 @@ func (c *Session) handleAuthorize(req request) {
 	if c.primary == "" {
 		c.primary = user
 	}
-	if d, ok := parsePasswordDiff(pass); ok && !c.started {
-		c.diff = c.vd.clamp(d)
+	if d, ok := parsePasswordDiff(pass); ok {
+		c.pwDiff = d
 	}
+	ds := c.srv.diffs.Load()
+	if fd, ok := c.fixedLocked(ds); ok {
+		c.diff = fd
+	}
+	started := c.started
 	c.authorized = true
 	c.mu.Unlock()
 	if isNew {
@@ -353,7 +359,42 @@ func (c *Session) handleAuthorize(req request) {
 		c.srv.log.Info("miner authorized", "ip", c.ip, "user", user, "payout", payout.Address, "en1", c.en1Hex)
 	}
 	c.reply(req.ID, true, nil)
+	if started {
+		c.applyDiffChange()
+	}
 	c.maybeStart()
+}
+
+// fixedLocked returns the fixed difficulty for this connection, if any
+// (see DiffSettings for the precedence). c.mu must be held.
+func (c *Session) fixedLocked(ds *DiffSettings) (float64, bool) {
+	if v, ok := ds.OverrideFor(sortedKeys(c.workers, c.primary)); ok {
+		return v, true
+	}
+	if c.pwDiff > 0 {
+		return ds.Clamp(c.pwDiff), true
+	}
+	if ds.FixedDiff > 0 {
+		return ds.Clamp(ds.FixedDiff), true
+	}
+	return 0, false
+}
+
+// reapplyDiff re-evaluates the difficulty after a settings change.
+func (c *Session) reapplyDiff() {
+	ds := c.srv.diffs.Load()
+	c.mu.Lock()
+	if fd, ok := c.fixedLocked(ds); ok {
+		c.diff = fd
+	} else {
+		c.diff = ds.Clamp(c.diff)
+	}
+	c.vd.reset(time.Now())
+	started := c.started
+	c.mu.Unlock()
+	if started {
+		c.applyDiffChange()
+	}
 }
 
 // parsePasswordDiff recognises the common "d=1024" password convention.
@@ -420,7 +461,10 @@ func (c *Session) handleSuggestDifficulty(req request) {
 		return
 	}
 	c.mu.Lock()
-	c.diff = c.vd.clamp(ps[0])
+	ds := c.srv.diffs.Load()
+	if _, fixed := c.fixedLocked(ds); !fixed {
+		c.diff = ds.Clamp(ps[0]) // a suggestion: vardiff continues from here
+	}
 	started := c.started
 	c.mu.Unlock()
 	if len(req.ID) > 0 && string(req.ID) != "null" {
@@ -544,7 +588,12 @@ func (c *Session) tick(now time.Time) {
 		c.mu.Unlock()
 		return
 	}
-	nd, changed := c.vd.onTick(now, c.diff)
+	ds := c.srv.diffs.Load()
+	if _, fixed := c.fixedLocked(ds); fixed {
+		c.mu.Unlock()
+		return
+	}
+	nd, changed := c.vd.onTick(now, c.diff, *ds)
 	if changed {
 		c.diff = nd
 	}
@@ -693,7 +742,11 @@ func (c *Session) accept(id json.RawMessage, worker string, credited, achieved f
 	c.srv.log.Debug("share accepted", "ip", c.ip, "worker", worker, "hash", hash.String(),
 		"difficulty", achieved, "version_interp", interp)
 	c.mu.Lock()
-	nd, changed := c.vd.onShare(time.Now(), credited, c.diff)
+	ds := c.srv.diffs.Load()
+	nd, changed := c.diff, false
+	if _, fixed := c.fixedLocked(ds); !fixed {
+		nd, changed = c.vd.onShare(time.Now(), credited, c.diff, *ds)
+	}
 	if changed {
 		c.diff = nd
 	}

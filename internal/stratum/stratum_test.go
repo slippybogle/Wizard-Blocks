@@ -48,6 +48,9 @@ func testServer(t *testing.T, cfg Config) *Server {
 func pipeSession(t *testing.T, s *Server) (*Session, *bufio.Reader, net.Conn) {
 	a, b := net.Pipe()
 	sess := newSession(s, a, "127.0.0.1", 0x01020304)
+	s.mu.Lock()
+	s.sessions[sess] = struct{}{} // as admit() would
+	s.mu.Unlock()
 	go sess.writer()
 	t.Cleanup(func() { sess.close("test"); b.Close() })
 	return sess, bufio.NewReader(b), b
@@ -283,7 +286,7 @@ func TestVardiffConverges(t *testing.T) {
 		for i := 0; i < 2000; i++ {
 			// Expected time to the next share at difficulty cur.
 			now = now.Add(time.Duration(cur * 4294967296 / hashrate * float64(time.Second)))
-			if nd, ok := v.onShare(now, cur, cur); ok {
+			if nd, ok := v.onShare(now, cur, cur, testDS(cfg)); ok {
 				cur = nd
 			}
 		}
@@ -301,7 +304,7 @@ func TestVardiffQuietMinerDecreases(t *testing.T) {
 	cur := 1e6
 	for i := 0; i < 10; i++ {
 		now = now.Add(2*cfg.Retarget + time.Second)
-		if nd, ok := v.onTick(now, cur); ok {
+		if nd, ok := v.onTick(now, cur, testDS(cfg)); ok {
 			if nd >= cur {
 				t.Fatal("tick did not lower difficulty")
 			}
@@ -314,7 +317,7 @@ func TestVardiffQuietMinerDecreases(t *testing.T) {
 	// Never below min.
 	for i := 0; i < 100; i++ {
 		now = now.Add(2*cfg.Retarget + time.Second)
-		if nd, ok := v.onTick(now, cur); ok {
+		if nd, ok := v.onTick(now, cur, testDS(cfg)); ok {
 			cur = nd
 		}
 	}
@@ -376,5 +379,138 @@ func TestVersionCandidates(t *testing.T) {
 	}
 	if !HasInterp("bip310+or", "or") || HasInterp("bip310+or", "xor") {
 		t.Fatal("HasInterp")
+	}
+}
+
+func testDS(cfg VardiffConfig) DiffSettings {
+	return DiffSettings{Min: cfg.Min, Max: cfg.Max, TargetSeconds: cfg.TargetShare.Seconds(), Overrides: map[string]float64{}}
+}
+
+func TestDiffSettingsValidate(t *testing.T) {
+	ok := DiffSettings{Min: 1, Max: 1e12, TargetSeconds: 10, Overrides: map[string]float64{"rig.1": 512}}
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	bad := map[string]func(*DiffSettings){
+		"min > max":       func(d *DiffSettings) { d.Min, d.Max = 100, 10 },
+		"min zero":        func(d *DiffSettings) { d.Min = 0 },
+		"max too big":     func(d *DiffSettings) { d.Max = 1e16 },
+		"max NaN":         func(d *DiffSettings) { d.Max = math.NaN() },
+		"target zero":     func(d *DiffSettings) { d.TargetSeconds = 0 },
+		"target too long": func(d *DiffSettings) { d.TargetSeconds = 601 },
+		"fixed below min": func(d *DiffSettings) { d.FixedDiff = 0.5 },
+		"fixed above max": func(d *DiffSettings) { d.FixedDiff = 2e12 },
+		"fixed negative":  func(d *DiffSettings) { d.FixedDiff = -1 },
+		"override zero":   func(d *DiffSettings) { d.Overrides["x"] = 0 },
+		"override noname": func(d *DiffSettings) { d.Overrides[" "] = 5 },
+		"override inf":    func(d *DiffSettings) { d.Overrides["x"] = math.Inf(1) },
+	}
+	for name, mutate := range bad {
+		d := ok.Clone()
+		mutate(&d)
+		if d.Validate() == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// authorizeSession runs mining.subscribe + mining.authorize on a pipe session.
+func authorizeSession(t *testing.T, s *Server, user, pass string) *Session {
+	t.Helper()
+	sess, r, _ := pipeSession(t, s)
+	go func() { _, _ = io.Copy(io.Discard, r) }()
+	sess.handleLine([]byte(`{"id":1,"method":"mining.subscribe","params":[]}`))
+	b, _ := json.Marshal(map[string]any{"id": 2, "method": "mining.authorize", "params": []string{user, pass}})
+	sess.handleLine(b)
+	return sess
+}
+
+func diffOf(s *Session) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.diff
+}
+
+// fastShares feeds accepted shares far faster than the target rate, which
+// would make vardiff raise the difficulty if it were active.
+func fastShares(s *Session, n int) {
+	for i := 0; i < n; i++ {
+		s.accept(json.RawMessage("9"), s.primary, diffOf(s), diffOf(s), "none", [32]byte{})
+	}
+}
+
+func TestPasswordDifficultyOverride(t *testing.T) {
+	cfg := testConfig() // vardiff min 1, max 1e12
+	s := testServer(t, cfg)
+	sess := authorizeSession(t, s, "rig.1", "d=512")
+	if d := diffOf(sess); d != 512 {
+		t.Fatalf("d=512 gave difficulty %v", d)
+	}
+	fastShares(sess, 50)
+	if d := diffOf(sess); d != 512 {
+		t.Fatalf("vardiff changed a password-fixed difficulty to %v", d)
+	}
+	if d := diffOf(authorizeSession(t, s, "rig.2", "x,d=5e20")); d != 1e12 {
+		t.Fatalf("d above max not clamped: %v", d)
+	}
+	if d := diffOf(authorizeSession(t, s, "rig.3", "d=0.0001")); d != 1 {
+		t.Fatalf("d below min not clamped: %v", d)
+	}
+	// Without d=, vardiff is active and reacts to the fast shares.
+	free := authorizeSession(t, s, "rig.4", "x")
+	before := diffOf(free)
+	fastShares(free, 50)
+	if diffOf(free) <= before {
+		t.Fatalf("vardiff did not raise difficulty: %v -> %v", before, diffOf(free))
+	}
+}
+
+func TestFixedDiffDisablesVardiff(t *testing.T) {
+	cfg := testConfig()
+	cfg.Vardiff.FixedDiff = 2048
+	s := testServer(t, cfg)
+	sess := authorizeSession(t, s, "rig.1", "x")
+	if d := diffOf(sess); d != 2048 {
+		t.Fatalf("fixed diff not applied: %v", d)
+	}
+	fastShares(sess, 50)
+	sess.tick(time.Now().Add(time.Hour))
+	if d := diffOf(sess); d != 2048 {
+		t.Fatalf("fixed diff changed to %v", d)
+	}
+	// A miner's own d= still wins over the global fixed difficulty.
+	if d := diffOf(authorizeSession(t, s, "rig.2", "d=64")); d != 64 {
+		t.Fatalf("password override with FIXED_DIFF: %v", d)
+	}
+}
+
+func TestLiveSettingsReapply(t *testing.T) {
+	s := testServer(t, testConfig())
+	a := authorizeSession(t, s, "rig.a", "x")
+	b := authorizeSession(t, s, "rig.b", "d=300")
+	c := authorizeSession(t, s, "rig.c", "x")
+	ds := s.DiffSettings()
+	ds.FixedDiff = 1000
+	ds.Overrides["rig.c"] = 77
+	if err := s.SetDiffSettings(ds); err != nil {
+		t.Fatal(err)
+	}
+	if diffOf(a) != 1000 || diffOf(b) != 300 || diffOf(c) != 77 {
+		t.Fatalf("after live update: a=%v b=%v c=%v", diffOf(a), diffOf(b), diffOf(c))
+	}
+	// Narrowing min/max re-clamps overrides and password difficulties.
+	ds.FixedDiff = 0
+	ds.Min, ds.Max = 400, 500
+	if err := s.SetDiffSettings(ds); err != nil {
+		t.Fatal(err)
+	}
+	if diffOf(a) != 500 || diffOf(b) != 400 || diffOf(c) != 400 {
+		t.Fatalf("after re-clamp: a=%v b=%v c=%v", diffOf(a), diffOf(b), diffOf(c))
+	}
+	// Invalid settings are refused and leave the live ones untouched.
+	bad := s.DiffSettings()
+	bad.Min, bad.Max = 10, 1
+	if s.SetDiffSettings(bad) == nil || s.DiffSettings().Min != 400 {
+		t.Fatal("invalid settings applied")
 	}
 }

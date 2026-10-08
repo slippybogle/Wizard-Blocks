@@ -23,17 +23,20 @@ import (
 
 // Engine is one running instance (one coin).
 type Engine struct {
-	cfg   config.Config
-	log   *slog.Logger
-	rpc   *node.Client
-	st    *stats.Collector
-	mgr   *work.Manager
-	srv   *stratum.Server
-	api   *stats.Server
-	ui    *ui.Server
-	ver   string
-	net   *address.Network
-	fixed *stratum.Payout
+	cfg config.Config
+	log *slog.Logger
+	rpc *node.Client
+	st  *stats.Collector
+	mgr *work.Manager
+	srv *stratum.Server
+	api *stats.Server
+	ui  *ui.Server
+	ver string
+
+	settingsMu sync.Mutex
+	baseDiff   stratum.DiffSettings // from config/env
+	net        *address.Network
+	fixed      *stratum.Payout
 
 	cacheMu sync.Mutex
 	cache   map[string]*stratum.Payout
@@ -221,10 +224,13 @@ func (e *Engine) Start(ctx context.Context) error {
 		Vardiff: stratum.VardiffConfig{
 			Initial: v.Initial, Min: v.Min, Max: v.Max,
 			TargetShare: time.Duration(v.TargetShareS * float64(time.Second)),
+			FixedDiff:   v.FixedDiff,
 			Retarget:    time.Duration(v.RetargetS * float64(time.Second)),
 			VariancePct: v.VariancePct,
 		},
 	}, e.mgr, e.resolve, e.st, e.log)
+	e.baseDiff = e.srv.DiffSettings()
+	e.loadSavedSettings()
 	if err := e.srv.Listen(); err != nil {
 		return fmt.Errorf("stratum listen: %w", err)
 	}
@@ -241,7 +247,9 @@ func (e *Engine) Start(ctx context.Context) error {
 			Coin: e.cfg.Coin, Version: e.ver, StratumPort: e.cfg.StratumPort(), PayoutMode: e.cfg.Payout.Mode,
 			PayoutAddress: payout, Extranonce2Size: e.cfg.Stratum.Extranonce2Size,
 			VersionMask: e.cfg.Stratum.VersionRollingMask, DataDir: e.cfg.DataDir,
+			AdminPassword: e.cfg.UI.AdminPassword,
 		}, e.st, e.rpc, e.log)
+		e.ui.SetSettingsBackend(e)
 		if err := e.ui.Listen(e.cfg.UI.Listen); err != nil {
 			return fmt.Errorf("ui listen: %w", err)
 		}

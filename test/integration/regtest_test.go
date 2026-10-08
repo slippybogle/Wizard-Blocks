@@ -8,7 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"math/big"
+	"net/http"
+	"net/http/cookiejar"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -212,6 +218,8 @@ func runCoin(t *testing.T, cfg suite) {
 	// ---- Phase A: fixed payout, ZMQ + polling, two miners, reconnect, many txs ----
 	cfgA := engineConfig(a, coin)
 	cfgA.Payout.Mode, cfgA.Payout.Address = "fixed", payout
+	cfgA.UI.AdminPassword = "it-admin-pass"
+	cfgA.DataDir = t.TempDir()
 	enA := startEngine(t, cfgA, coin+"-fixed")
 
 	m1 := startMiner(t, enA, rec, "rig1", "bip310")
@@ -261,6 +269,7 @@ func runCoin(t *testing.T, cfg suite) {
 	t.Run("ProtocolAndInvalidShares", func(t *testing.T) { expectNonAccepted = testProtocol(t, enA, a, rec, &external) })
 	if cfg.concurrent {
 		t.Run("ConcurrentMiners", func(t *testing.T) { testConcurrent(t, enA, a, rec, expectNonAccepted) })
+		t.Run("LiveDifficultySettings", func(t *testing.T) { testLiveDifficulty(t, enA, cfgA.DataDir) })
 	}
 
 	// ZMQ must have been the primary new-block signal in phase A.
@@ -1048,3 +1057,105 @@ func testConcurrent(t *testing.T, en *Engine, a *Node, rec *recorder, nonAccepte
 
 // prevHashHeaderBytes is the header-order prevhash the miner reconstructs.
 func prevHashHeaderBytes(h bitcoin.Hash) []byte { return h[:] }
+
+// testLiveDifficulty drives the authenticated settings API on the UI port and
+// checks that connected miners receive the new difficulty immediately.
+func testLiveDifficulty(t *testing.T, en *Engine, dataDir string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	uiBase := "http://" + en.E.UIAddr()
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	call := func(method, path string, body any) int {
+		var rd io.Reader
+		if body != nil {
+			b, _ := json.Marshal(body)
+			rd = bytes.NewReader(b)
+		}
+		req, _ := http.NewRequest(method, uiBase+path, rd)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-WB-Admin", "1")
+		res, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		return res.StatusCode
+	}
+	// Never exposed on the stats API port.
+	if res, err := http.Get("http://" + en.E.APIAddr() + "/api/admin/settings"); err != nil || res.StatusCode != 404 {
+		t.Fatalf("settings reachable on the API port: %v %v", res.StatusCode, err)
+	}
+	if code := call("GET", "/api/admin/settings", nil); code != 401 {
+		t.Fatalf("unauthenticated settings: %d", code)
+	}
+	if code := call("POST", "/api/admin/login", map[string]string{"password": "it-admin-pass"}); code != 200 {
+		t.Fatalf("login: %d", code)
+	}
+
+	dial := func(user, pass string) *testminer.Client {
+		c, err := testminer.Dial(en.E.StratumAddr())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(c.Close)
+		if err := c.Subscribe(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := c.Authorize(ctx, user, pass); err != nil || !r.OK() {
+			t.Fatalf("authorize %s", user)
+		}
+		if _, err := c.WaitJob(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	diffIs := func(c *testminer.Client, want float64, what string) {
+		waitFor(t, what, 5*time.Second, func() bool {
+			_, _, _, d, _ := c.State()
+			return math.Abs(d/want-1) < 1e-9
+		})
+	}
+	a := dial("live1", "x")
+	b := dial("live2", "d=2e-10") // miner pins its own difficulty
+	// Values below regtest network difficulty (4.66e-10) so the cap does not hide them.
+	settings := map[string]any{"vardiff_min": 1e-11, "vardiff_max": 1000, "vardiff_target_seconds": 10, "fixed_diff": 1e-10, "worker_overrides": map[string]float64{}}
+	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
+		t.Fatalf("PUT fixed: %d", code)
+	}
+	diffIs(a, 1e-10, "FIXED_DIFF pushed to connected miner")
+	diffIs(b, 2e-10, "password d= kept over FIXED_DIFF")
+	jobBefore := a.DrainJobs()
+	settings["worker_overrides"] = map[string]float64{"live1": 3e-10}
+	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
+		t.Fatalf("PUT override: %d", code)
+	}
+	diffIs(a, 3e-10, "per-worker override pushed")
+	if j := a.DrainJobs(); j == nil || j.ID == jobBefore.ID {
+		t.Fatal("difficulty change was not followed by a fresh job")
+	}
+	// Overrides are clamped to min/max.
+	settings["vardiff_max"] = 2.5e-10
+	settings["fixed_diff"] = 2e-10
+	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
+		t.Fatalf("PUT clamp: %d", code)
+	}
+	diffIs(a, 2.5e-10, "override clamped to VARDIFF_MAX")
+	// Invalid settings are refused and nothing changes.
+	if code := call("PUT", "/api/admin/settings", map[string]any{"vardiff_min": 10, "vardiff_max": 1, "vardiff_target_seconds": 10}); code != 400 {
+		t.Fatalf("invalid PUT: %d", code)
+	}
+	diffIs(a, 2.5e-10, "unchanged after invalid PUT")
+	saved, err := os.ReadFile(filepath.Join(dataDir, "settings-bch.json"))
+	if err != nil || !strings.Contains(string(saved), `"live1": 3e-10`) {
+		t.Fatalf("settings not saved: %v %s", err, saved)
+	}
+	if code := call("POST", "/api/admin/settings/reset", nil); code != 200 {
+		t.Fatalf("reset: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "settings-bch.json")); !os.IsNotExist(err) {
+		t.Fatal("reset did not delete the saved settings")
+	}
+	t.Log("live difficulty: fixed, password pin, per-worker override, clamping, validation, persistence and reset verified")
+}

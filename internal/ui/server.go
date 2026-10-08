@@ -18,6 +18,7 @@ import (
 
 	"github.com/slippybogle/wizard-blocks/internal/node"
 	"github.com/slippybogle/wizard-blocks/internal/stats"
+	"github.com/slippybogle/wizard-blocks/internal/stratum"
 )
 
 //go:embed static
@@ -33,6 +34,7 @@ type Config struct {
 	Extranonce2Size int
 	VersionMask     string
 	DataDir         string
+	AdminPassword   string
 }
 
 // Server is the web UI server.
@@ -51,6 +53,7 @@ type Server struct {
 	hist  *history
 
 	sseClients atomic.Int32
+	admin      *admin
 }
 
 // NodeDetail is node information polled for the Ledger page.
@@ -76,7 +79,7 @@ type NodeDetail struct {
 
 // New creates the UI server.
 func New(cfg Config, st *stats.Collector, rpc *node.Client, log *slog.Logger) *Server {
-	s := &Server{cfg: cfg, st: st, rpc: rpc, log: log, confs: map[string]int64{}, hist: newHistory()}
+	s := &Server{cfg: cfg, st: st, rpc: rpc, log: log, confs: map[string]int64{}, hist: newHistory(), admin: newAdmin(cfg.AdminPassword)}
 	if cfg.DataDir != "" {
 		s.hist.load(filepath.Join(cfg.DataDir, "history-"+cfg.Coin+".json"))
 	}
@@ -97,6 +100,7 @@ func (s *Server) Listen(addr string) error {
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/blocks", s.handleBlocks)
+	s.routesAdmin(mux)
 	mux.Handle("/", files)
 	s.srv = &http.Server{Handler: secure(mux), ReadHeaderTimeout: 5 * time.Second}
 	return nil
@@ -305,12 +309,13 @@ type Derived struct {
 
 // StratumInfo tells miners how to connect.
 type StratumInfo struct {
-	Port            int    `json:"port"`
-	PayoutMode      string `json:"payout_mode"`
-	PayoutAddress   string `json:"payout_address,omitempty"`
-	UsernameFormat  string `json:"username_format"`
-	Extranonce2Size int    `json:"extranonce2_size"`
-	VersionMask     string `json:"version_rolling_mask"`
+	Port            int                   `json:"port"`
+	PayoutMode      string                `json:"payout_mode"`
+	PayoutAddress   string                `json:"payout_address,omitempty"`
+	UsernameFormat  string                `json:"username_format"`
+	Extranonce2Size int                   `json:"extranonce2_size"`
+	VersionMask     string                `json:"version_rolling_mask"`
+	Difficulty      *stratum.DiffSettings `json:"difficulty,omitempty"`
 }
 
 // odds returns the probability of at least one block in seconds at hashrate.
@@ -333,6 +338,10 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 			Port: s.cfg.StratumPort, PayoutMode: s.cfg.PayoutMode, PayoutAddress: s.cfg.PayoutAddress,
 			Extranonce2Size: s.cfg.Extranonce2Size, VersionMask: s.cfg.VersionMask,
 		},
+	}
+	if s.admin.backend != nil {
+		d, _, _ := s.admin.backend.DiffSettings()
+		st.Stratum.Difficulty = &d
 	}
 	if st.Workers == nil {
 		st.Workers = []stats.WorkerSnapshot{}
