@@ -22,7 +22,7 @@ func main() {
 	threads := flag.Int("threads", 1, "hashing threads")
 	zeros := flag.Int("min-zero-bits", 0, "only submit hashes with at least this many leading zero bits")
 	mask := flag.Uint("mask", 0x1fffe000, "requested version-rolling mask (0 disables)")
-	xor := flag.Bool("xor-version", false, "submit version bits as rolled^job (firmware compatibility mode)")
+	vmode := flag.String("version-mode", "bip310", "version bits encoding: bip310 | xor (ESP-Miner) | or (cgminer)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -57,8 +57,8 @@ func main() {
 		}
 	}()
 	err = c.Mine(ctx, testminer.MineOptions{
-		Worker: *user, Threads: *threads, MinZeroBits: *zeros, RollVersion: *mask != 0, XORVersion: *xor,
-		OnResult: func(j *testminer.Job, r *testminer.Response, hash string) {
+		Worker: *user, Threads: *threads, MinZeroBits: *zeros, RollVersion: *mask != 0, VersionMode: *vmode,
+		OnResult: func(j *testminer.Job, r *testminer.Response, hash string, _ uint32) {
 			if r.OK() {
 				ok.Add(1)
 			} else {

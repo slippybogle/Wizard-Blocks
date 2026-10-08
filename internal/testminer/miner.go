@@ -471,13 +471,19 @@ type MineOptions struct {
 	Threads     int
 	MinZeroBits int  // only submit shares whose hash has at least this many leading zero bits
 	RollVersion bool // roll version bits inside the negotiated mask
-	XORVersion  bool // submit version as rolled^job (some firmware) instead of BIP310 bits
+	// VersionMode selects how rolled versions are built and reported:
+	//   "bip310" (default): version = (job & ~mask) | x; submit version & mask
+	//   "xor"  (ESP-Miner): version = (job & ~mask) | x; submit version ^ job
+	//   "or"   (cgminer):   version = job | x;           submit x
+	VersionMode string
 	// OneBlockPerPrevHash: after submitting a block-solving share, submit no
 	// further block-solving shares on the same previous block (avoids racing
 	// our own blocks at the same height on regtest, where most shares solve).
 	OneBlockPerPrevHash bool
 	// OnResult is called for every submit response.
-	OnResult func(job *Job, r *Response, hashHex string)
+	OnResult func(job *Job, r *Response, hashHex string, version uint32)
+	// OnSubmit is called just before each share is sent.
+	OnSubmit func(job *Job, hashHex string, version uint32)
 }
 
 // Mine hashes the current job until ctx ends or the connection closes.
@@ -549,10 +555,16 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 		target := ShareTarget(diff)
 		netTarget := CompactTarget(job.Bits)
 		version := job.Version
+		var rollBits uint32
 		if o.RollVersion && mask != 0 {
 			// Spread rolled values over the mask bits: (job & ~mask) | (x & mask).
 			x := uint32(en2Counter*0x9e3779b1) << 13
-			version = job.Version&^mask | x&mask
+			rollBits = x & mask
+			if o.VersionMode == "or" {
+				version = job.Version | x&mask
+			} else {
+				version = job.Version&^mask | x&mask
+			}
 		}
 		ntime := job.NTime
 		for nonce := uint32(0); ; nonce++ {
@@ -578,10 +590,16 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 				vhex := ""
 				if mask != 0 {
 					bits := version & mask
-					if o.XORVersion {
+					switch o.VersionMode {
+					case "xor":
 						bits = version ^ job.Version
+					case "or":
+						bits = rollBits // cgminer reports the mask bits it OR'd in
 					}
 					vhex = fmt.Sprintf("%08x", bits)
+				}
+				if o.OnSubmit != nil {
+					o.OnSubmit(job, hex.EncodeToString(be[:]), version)
 				}
 				r, err := c.Submit(ctx, o.Worker, job.ID, hex.EncodeToString(en2),
 					fmt.Sprintf("%08x", ntime), fmt.Sprintf("%08x", nonce), vhex)
@@ -589,7 +607,7 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 					return err
 				}
 				if o.OnResult != nil {
-					o.OnResult(job, r, hex.EncodeToString(be[:]))
+					o.OnResult(job, r, hex.EncodeToString(be[:]), version)
 				}
 				break // fresh extranonce2 for the next share
 			}

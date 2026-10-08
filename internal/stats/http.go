@@ -128,7 +128,7 @@ func WritePrometheus(w io.Writer, s Snapshot) {
 	g("wb_best_share_difficulty", "Best share difficulty ever achieved.", "gauge")
 	fmt.Fprintf(w, "wb_best_share_difficulty{coin=\"%s\"} %g\n", coin, s.Pool.BestDiff)
 	g("wb_blocks_total", "Block candidates by final status.", "counter")
-	byStatus := map[string]int{"accepted": 0, "rejected": 0, "orphaned": 0, "submitted": 0, "stale": 0}
+	byStatus := map[string]int{"accepted": 0, "rejected": 0, "orphaned": 0, "pending": 0, "stale": 0}
 	for _, b := range s.Blocks {
 		byStatus[b.Status]++
 	}

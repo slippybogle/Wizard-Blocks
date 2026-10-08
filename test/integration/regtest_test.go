@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,13 +21,71 @@ import (
 	"github.com/slippybogle/wizard-blocks/internal/engine"
 	"github.com/slippybogle/wizard-blocks/internal/logging"
 	"github.com/slippybogle/wizard-blocks/internal/stats"
+	"github.com/slippybogle/wizard-blocks/internal/stratum"
 	"github.com/slippybogle/wizard-blocks/internal/testminer"
 )
 
 const minZeroBits = 16 // every submitted share/block hash must start with 16 zero bits
 
-func TestRegtestBTC(t *testing.T) { runCoin(t, "btc") }
-func TestRegtestBCH(t *testing.T) { runCoin(t, "bch") }
+// TestRegtestBTC runs with Bitcoin Core's default regtest deployments: the
+// "testdummy" BIP9 deployment signals on version bit 28 — inside the BIP320
+// rolling mask — from height 144, so the version-rolling interpretations
+// diverge (as mainnet BIP9 signalling inside the mask would).
+func TestRegtestBTC(t *testing.T) { runCoin(t, suite{coin: "btc", expectSignal: true}) }
+
+// TestRegtestBTCNoSignal disables testdummy so every template version is
+// 0x20000000 and all interpretations coincide (the normal mainnet path).
+func TestRegtestBTCNoSignal(t *testing.T) {
+	runCoin(t, suite{coin: "btc", nodeArgs: []string{"-vbparams=testdummy:-2:0"}})
+}
+
+// TestRegtestBCH is the extended BCH suite: 500+ blocks across four
+// halvings, a 1000-tx template, a node restart, every CashAddr/legacy
+// payout form, and an empty coinbase tag so the 100-byte minimum
+// transaction size padding is exercised.
+func TestRegtestBCH(t *testing.T) {
+	runCoin(t, suite{coin: "bch", phaseA: 350, perVariant: 22, nTx: 1000, nodeRestart: true, emptyTagPhaseB: true, minBlocks: 500})
+}
+
+// suite parameterises runCoin.
+type suite struct {
+	coin           string
+	expectSignal   bool
+	nodeArgs       []string
+	phaseA         int // accepted blocks to reach in phase A (default 150)
+	perVariant     int // blocks per payout variant in phase B (default 12)
+	nTx            int // wallet transactions to put in one template (default 300)
+	nodeRestart    bool
+	emptyTagPhaseB bool
+	minBlocks      int // default 200
+}
+
+const rollMask = 0x1fffe000
+
+// submission is what our miner (or a hand-built share) actually hashed.
+type submission struct {
+	worker, mode string
+	version      uint32
+}
+
+// recorder maps block-hash hex -> submission for every accepted share.
+type recorder struct {
+	mu sync.Mutex
+	m  map[string]submission
+}
+
+func (r *recorder) add(hash string, s submission) {
+	r.mu.Lock()
+	r.m[hash] = s
+	r.mu.Unlock()
+}
+
+func (r *recorder) get(hash string) (submission, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.m[hash]
+	return s, ok
+}
 
 // miner wraps a running test miner.
 type miner struct {
@@ -38,7 +97,7 @@ type miner struct {
 	rejects  map[int]int
 }
 
-func startMiner(t *testing.T, en *Engine, user string, xor bool) *miner {
+func startMiner(t *testing.T, en *Engine, rec *recorder, user, mode string) *miner {
 	t.Helper()
 	ctx := context.Background()
 	c, err := testminer.Dial(en.E.StratumAddr())
@@ -65,9 +124,12 @@ func startMiner(t *testing.T, en *Engine, user string, xor bool) *miner {
 	go func() {
 		defer close(m.done)
 		_ = c.Mine(mctx, testminer.MineOptions{
-			Worker: user, Threads: 2, MinZeroBits: minZeroBits, RollVersion: true, XORVersion: xor,
+			Worker: user, Threads: 2, MinZeroBits: minZeroBits, RollVersion: true, VersionMode: mode,
 			OneBlockPerPrevHash: true,
-			OnResult: func(j *testminer.Job, r *testminer.Response, hash string) {
+			OnSubmit: func(j *testminer.Job, hash string, version uint32) {
+				rec.add(hash, submission{worker: user, mode: mode, version: version})
+			},
+			OnResult: func(j *testminer.Job, r *testminer.Response, hash string, version uint32) {
 				if r.OK() {
 					m.accepted.Add(1)
 					return
@@ -104,13 +166,27 @@ func mineUntil(t *testing.T, en *Engine, target int, timeout time.Duration) {
 	waitFor(t, fmt.Sprintf("%d accepted blocks", target), timeout, func() bool { return en.acceptedBlocks() >= target })
 }
 
-func runCoin(t *testing.T, coin string) {
+func runCoin(t *testing.T, cfg suite) {
+	coin, expectSignal, nodeArgs := cfg.coin, cfg.expectSignal, cfg.nodeArgs
+	if cfg.phaseA == 0 {
+		cfg.phaseA = 150
+	}
+	if cfg.perVariant == 0 {
+		cfg.perVariant = 12
+	}
+	if cfg.nTx == 0 {
+		cfg.nTx = 300
+	}
+	if cfg.minBlocks == 0 {
+		cfg.minBlocks = 200
+	}
 	suffix := randHex(3)
+	rec := &recorder{m: map[string]submission{}}
 	netName := "wbit-" + coin + "-" + suffix
 	docker(t, "network", "create", netName)
 	t.Cleanup(func() { docker(t, "network", "rm", netName) })
 
-	a := startNode(t, coin, netName, "wbit-"+coin+"-a-"+suffix)
+	a := startNode(t, coin, netName, "wbit-"+coin+"-a-"+suffix, nodeArgs...)
 	var none any
 	a.call(t, a.RPC, "createwallet", &none, "w")
 	external := 0
@@ -136,14 +212,14 @@ func runCoin(t *testing.T, coin string) {
 	cfgA.Payout.Mode, cfgA.Payout.Address = "fixed", payout
 	enA := startEngine(t, cfgA, coin+"-fixed")
 
-	m1 := startMiner(t, enA, "rig1", false)
+	m1 := startMiner(t, enA, rec, "rig1", "bip310")
 	mineUntil(t, enA, 60, 5*time.Minute)
 
-	// Disconnect, verify the server noticed, reconnect with a firmware-style
+	// Disconnect, verify the server noticed, reconnect with ESP-Miner-style
 	// (XOR) version-bits encoding.
 	m1.stop(t)
 	waitFor(t, "connection count 0", 10*time.Second, func() bool { return enA.E.Stats().Snapshot().Pool.Connections == 0 })
-	m2 := startMiner(t, enA, "rig1", true)
+	m2 := startMiner(t, enA, rec, "rig1", "xor")
 	mineUntil(t, enA, 110, 5*time.Minute)
 	m2.stop(t)
 
@@ -152,7 +228,8 @@ func runCoin(t *testing.T, coin string) {
 	for i := range dests {
 		dests[i] = a.newAddress(t, "")
 	}
-	const nTx = 300
+	nTx := cfg.nTx
+	txStart := time.Now()
 	for i := 0; i < nTx; i++ {
 		var txid string
 		a.call(t, a.Wallet, "sendtoaddress", &txid, dests[i%len(dests)], "0.001")
@@ -164,16 +241,22 @@ func runCoin(t *testing.T, coin string) {
 	if mp.Size < nTx {
 		t.Fatalf("mempool has %d txs, want >= %d", mp.Size, nTx)
 	}
+	t.Logf("created %d wallet txs in %v", nTx, time.Since(txStart))
 	before := enA.acceptedBlocks()
-	m3 := startMiner(t, enA, "rig2", false)
+	m3 := startMiner(t, enA, rec, "rig2", "or")
 	waitFor(t, "mempool drained into our blocks", 3*time.Minute, func() bool {
 		a.call(t, a.RPC, "getmempoolinfo", &mp)
 		return mp.Size == 0 && enA.acceptedBlocks() > before
 	})
-	mineUntil(t, enA, 150, 5*time.Minute)
+	mineUntil(t, enA, cfg.phaseA, 10*time.Minute)
 	m3.stop(t)
 
-	t.Run("ProtocolAndInvalidShares", func(t *testing.T) { testProtocol(t, enA, a, &external) })
+	if cfg.nodeRestart {
+		t.Run("NodeRestart", func(t *testing.T) { testNodeRestart(t, enA, a, rec) })
+	}
+
+	var expectNonAccepted map[string][]string // hash -> allowed statuses
+	t.Run("ProtocolAndInvalidShares", func(t *testing.T) { expectNonAccepted = testProtocol(t, enA, a, rec, &external) })
 
 	// ZMQ must have been the primary new-block signal in phase A.
 	if s := enA.E.Stats().Snapshot(); !s.Node.ZMQConnected || s.Node.ZMQMessages < 100 {
@@ -186,19 +269,33 @@ func runCoin(t *testing.T, coin string) {
 	cfgB := engineConfig(a, coin)
 	cfgB.Payout.Mode, cfgB.Payout.Address = "miner", ""
 	cfgB.Node.ZMQHashBlock = ""
+	if cfg.emptyTagPhaseB {
+		cfgB.Payout.CoinbaseTag = ""
+	}
 	enB := startEngine(t, cfgB, coin+"-miner")
 	t.Run("MinerModeAuthorize", func(t *testing.T) { testMinerModeAuth(t, enB, a, coin, &external) })
 
 	for i, addr := range payoutVariants(t, a, coin) {
 		before := enB.acceptedBlocks()
-		m := startMiner(t, enB, fmt.Sprintf("%s.worker%d", addr, i), i%2 == 1)
-		mineUntil(t, enB, before+12, 5*time.Minute)
+		mode := []string{"bip310", "xor", "or"}[i%3]
+		m := startMiner(t, enB, rec, fmt.Sprintf("%s.worker%d", addr, i), mode)
+		mineUntil(t, enB, before+cfg.perVariant, 5*time.Minute)
 		m.stop(t)
 	}
 	checkAPI(t, enB)
 	enB.Stop(t)
 
-	verifyChain(t, a, coin, startHeight, external, append(enA.E.Stats().Blocks(), enB.E.Stats().Blocks()...))
+	tagged := map[string]bool{}
+	for _, b := range enA.E.Stats().Blocks() {
+		tagged[b.Hash] = true
+	}
+	if !cfg.emptyTagPhaseB {
+		for _, b := range enB.E.Stats().Blocks() {
+			tagged[b.Hash] = true
+		}
+	}
+	verifyChain(t, a, coin, startHeight, external, append(enA.E.Stats().Blocks(), enB.E.Stats().Blocks()...),
+		rec, expectNonAccepted, expectSignal, tagged, cfg.minBlocks)
 }
 
 func testBadPayout(t *testing.T, a *Node, coin, good string) {
@@ -272,7 +369,8 @@ func expectCode(t *testing.T, what string, r *testminer.Response, err error, cod
 	t.Logf("%s: rejected as expected: %s", what, r.Error)
 }
 
-func testProtocol(t *testing.T, en *Engine, a *Node, external *int) {
+func testProtocol(t *testing.T, en *Engine, a *Node, rec *recorder, external *int) map[string][]string {
+	nonAccepted := map[string][]string{}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := en.E.StratumAddr()
@@ -383,12 +481,84 @@ func testProtocol(t *testing.T, en *Engine, a *Node, external *int) {
 	}
 	expectCode(t, "valid share", rs[0], nil, 0)
 	expectCode(t, "duplicate share", rs[1], nil, 22)
+	rec.add(hex.EncodeToString(be[:]), submission{worker: "rig-x", mode: "bip310", version: rolled})
 	waitFor(t, "block from protocol test on chain", 30*time.Second, func() bool { return a.height(t) == h0+1 })
 	var best string
 	a.call(t, a.RPC, "getbestblockhash", &best)
 	if best != hex.EncodeToString(be[:]) {
 		t.Fatalf("best block %s, expected our share %x", best, be)
 	}
+
+	// Same-height race: two different block solutions for one job, pipelined.
+	// Both are valid shares; exactly one becomes the block at that height, the
+	// other must be recorded as orphaned/stale and not counted as found.
+	waitFor(t, "fresh job for race", 10*time.Second, func() bool {
+		_, _, _, _, j := c.State()
+		return j != nil && !bytes.Equal(j.PrevHash, job.PrevHash)
+	})
+	raceJob := c.DrainJobs()
+	rjv := raceJob.Version
+	rrolled := rjv&^mask | 0x05500000&mask
+	rbits := fmt.Sprintf("%08x", rrolled&mask)
+	waitFor(t, "earlier block verifications to finish", 30*time.Second, func() bool {
+		for _, b := range en.E.Stats().Blocks() {
+			if b.Status == "pending" {
+				return false
+			}
+		}
+		return true
+	})
+	foundBefore := en.E.Stats().Snapshot().Pool.BlocksFound
+	n1, be1, ok1 := testminer.Grind(raceJob, en1, en2, rrolled, raceJob.NTime, func(be [32]byte) bool {
+		return testminer.LeadingZeroBits(be) >= minZeroBits
+	})
+	n2, be2, ok2 := testminer.GrindFrom(raceJob, en1, en2, rrolled, raceJob.NTime, n1+1, func(be [32]byte) bool {
+		return testminer.LeadingZeroBits(be) >= minZeroBits
+	})
+	if !ok1 || !ok2 {
+		t.Fatal("grind failed")
+	}
+	hr := a.height(t)
+	rnt := fmt.Sprintf("%08x", raceJob.NTime)
+	rs, err = c.CallMany(ctx, "mining.submit",
+		[]any{"rig-x", raceJob.ID, en2Hex, rnt, fmt.Sprintf("%08x", n1), rbits},
+		[]any{"rig-x", raceJob.ID, en2Hex, rnt, fmt.Sprintf("%08x", n2), rbits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectCode(t, "race share 1", rs[0], nil, 0)
+	expectCode(t, "race share 2", rs[1], nil, 0)
+	h1, h2 := hex.EncodeToString(be1[:]), hex.EncodeToString(be2[:])
+	rec.add(h1, submission{worker: "rig-x", mode: "bip310", version: rrolled})
+	rec.add(h2, submission{worker: "rig-x", mode: "bip310", version: rrolled})
+	final := func(h string) string {
+		for _, b := range en.E.Stats().Blocks() {
+			if b.Hash == h && b.Status != "pending" {
+				return b.Status
+			}
+		}
+		return ""
+	}
+	waitFor(t, "both race blocks resolved", 30*time.Second, func() bool { return final(h1) != "" && final(h2) != "" })
+	s1, s2 := final(h1), final(h2)
+	winner, loser, loserStatus := h1, h2, s2
+	if s2 == "accepted" {
+		winner, loser, loserStatus = h2, h1, s1
+	}
+	if final(winner) != "accepted" || (loserStatus != "orphaned" && loserStatus != "stale") {
+		t.Fatalf("race: statuses %s=%s %s=%s; want exactly one accepted, other orphaned/stale", h1, s1, h2, s2)
+	}
+	var atHeight string
+	a.call(t, a.RPC, "getblockhash", &atHeight, hr+1)
+	if atHeight != winner || a.height(t) != hr+1 {
+		t.Fatalf("race: chain has %s at %d, want winner %s", atHeight, hr+1, winner)
+	}
+	if got := en.E.Stats().Snapshot().Pool.BlocksFound; got != foundBefore+1 {
+		t.Fatalf("race: blocks_found went %d -> %d, want +1 (loser must not count)", foundBefore, got)
+	}
+	nonAccepted[loser] = []string{"orphaned", "stale"}
+	t.Logf("same-height race: winner %s accepted, loser %s %s", winner, loser, loserStatus)
+	job = raceJob
 
 	// Stale share: a new block arrives (mined by someone else) mid-job.
 	waitFor(t, "fresh job", 10*time.Second, func() bool {
@@ -412,9 +582,10 @@ func testProtocol(t *testing.T, en *Engine, a *Node, external *int) {
 		t.Fatal("new block job without clean_jobs=true")
 	}
 	t.Logf("external block detected and clean job sent in %v (zmq)", time.Since(detectStart))
-	nonce, _, ok = testminer.Grind(oldJob, en1, en2, oldJob.Version, oldJob.NTime, func(be [32]byte) bool {
+	nonce, staleBE, ok := testminer.Grind(oldJob, en1, en2, oldJob.Version, oldJob.NTime, func(be [32]byte) bool {
 		return testminer.LeadingZeroBits(be) >= minZeroBits
 	})
+	nonAccepted[hex.EncodeToString(staleBE[:])] = []string{"stale"}
 	if !ok {
 		t.Fatal("grind failed")
 	}
@@ -442,8 +613,7 @@ func testProtocol(t *testing.T, en *Engine, a *Node, external *int) {
 		t.Fatal("oversized line did not disconnect")
 	}
 
-	// Silent unauthenticated clients are dropped by the auth timeout (60 s is
-	// too long for the test; the slow-client path is covered by line limits).
+	return nonAccepted
 }
 
 func testMinerModeAuth(t *testing.T, en *Engine, a *Node, coin string, external *int) {
@@ -515,11 +685,16 @@ func payoutVariants(t *testing.T, a *Node, coin string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h32 := bytes.Repeat([]byte{0x44}, 32)
 	legacy := address.Base58CheckEncode(append([]byte{0x6f}, h...))
+	legacyP2SH32 := address.Base58CheckEncode(append([]byte{0xc4}, h32...))
 	token, _ := address.CashAddrEncode("bchreg", 2, h)
 	p2sh20, _ := address.CashAddrEncode("bchreg", 1, bytes.Repeat([]byte{0x33}, 20))
-	p2sh32, _ := address.CashAddrEncode("bchreg", 1, bytes.Repeat([]byte{0x44}, 32))
-	return []string{cash, legacy, token, p2sh20, p2sh32}
+	p2sh32, _ := address.CashAddrEncode("bchreg", 1, h32)
+	tokenP2SH32, _ := address.CashAddrEncode("bchreg", 3, bytes.Repeat([]byte{0x55}, 32))
+	prefixless := strings.TrimPrefix(a.newAddress(t, ""), "bchreg:")
+	upper := strings.ToUpper(a.newAddress(t, ""))
+	return []string{cash, prefixless, upper, legacy, token, p2sh20, p2sh32, tokenP2SH32, legacyP2SH32}
 }
 
 func mustSegwit(t *testing.T, hrp string, v byte, prog []byte) string {
@@ -532,9 +707,13 @@ func mustSegwit(t *testing.T, hrp string, v byte, prog []byte) string {
 
 func checkAPI(t *testing.T, en *Engine) {
 	var snap stats.Snapshot
-	if err := json.Unmarshal(apiGet(t, en, "/stats"), &snap); err != nil {
-		t.Fatal(err)
-	}
+	waitFor(t, "no pending blocks", 30*time.Second, func() bool {
+		snap = stats.Snapshot{}
+		if err := json.Unmarshal(apiGet(t, en, "/stats"), &snap); err != nil {
+			t.Fatal(err)
+		}
+		return snap.Pool.BlocksPending == 0
+	})
 	if snap.Pool.BlocksFound != en.acceptedBlocks() || !snap.Node.Synced || snap.Pool.Accepted == 0 || len(snap.Workers) == 0 {
 		t.Errorf("unexpected /stats: blocks=%d accepted=%d synced=%v workers=%d", snap.Pool.BlocksFound, snap.Pool.Accepted, snap.Node.Synced, len(snap.Workers))
 	}
@@ -552,25 +731,29 @@ func checkAPI(t *testing.T, en *Engine) {
 }
 
 // verifyChain checks every block the engine submitted against the node.
-func verifyChain(t *testing.T, a *Node, coin string, startHeight int64, external int, recs []stats.BlockRecord) {
+func verifyChain(t *testing.T, a *Node, coin string, startHeight int64, external int, recs []stats.BlockRecord,
+	rec *recorder, expectNonAccepted map[string][]string, expectSignal bool, tagged map[string]bool, minBlocks int) {
 	ctx := context.Background()
 	var accepted []stats.BlockRecord
-	stale := 0
+	seenNon := map[string]bool{}
 	for _, r := range recs {
-		switch r.Status {
-		case "accepted":
+		if r.Status == "accepted" {
 			accepted = append(accepted, r)
-		case "stale":
-			stale++
-		default:
-			t.Errorf("block %s at %d has status %s (%s)", r.Hash, r.Height, r.Status, r.Reason)
+			continue
+		}
+		allowed, ok := expectNonAccepted[r.Hash]
+		if !ok || !contains(allowed, r.Status) {
+			t.Errorf("unexpected non-accepted block %s at %d: status %s (%s)", r.Hash, r.Height, r.Status, r.Reason)
+		}
+		seenNon[r.Hash] = true
+	}
+	for h := range expectNonAccepted {
+		if !seenNon[h] {
+			t.Errorf("expected non-accepted block %s was not recorded", h)
 		}
 	}
-	if stale != 1 {
-		t.Errorf("expected exactly 1 (deliberate) stale block candidate, got %d", stale)
-	}
-	if len(accepted) < 200 {
-		t.Fatalf("only %d accepted blocks, want >= 200", len(accepted))
+	if len(accepted) < minBlocks {
+		t.Fatalf("only %d accepted blocks, want >= %d", len(accepted), minBlocks)
 	}
 	final := a.height(t)
 	if want := startHeight + int64(len(accepted)) + int64(external); final != want {
@@ -580,13 +763,36 @@ func verifyChain(t *testing.T, a *Node, coin string, startHeight int64, external
 	maxTxs := 0
 	var totalFees int64
 	scriptCache := map[string]string{}
+	signalled := map[string]int{}
+	padded := 0
+	halvings := map[int64]bool{}
 	for _, r := range accepted {
+		halvings[r.Height/150] = true
 		if _, dup := byHeight[r.Height]; dup {
 			t.Fatalf("two accepted blocks at height %d", r.Height)
 		}
 		byHeight[r.Height] = r
-		if !strings.HasPrefix(r.Hash, "0000") {
-			t.Fatalf("block %s lacks the miner's %d leading zero bits: server and miner disagree on the header", r.Hash, minZeroBits)
+		// The server must have built exactly the header our miner hashed,
+		// through the miner's own version-rolling interpretation.
+		sub, ok := rec.get(r.Hash)
+		if !ok {
+			t.Fatalf("block %s at %d is not a header any of our miners hashed", r.Hash, r.Height)
+		}
+		if !stratum.HasInterp(r.VersionInterp, sub.mode) {
+			t.Fatalf("block %d: server used interpretation %q, miner %s uses %q", r.Height, r.VersionInterp, sub.worker, sub.mode)
+		}
+		if r.BlockVersion != fmt.Sprintf("%08x", sub.version) {
+			t.Fatalf("block %d: version %s, miner hashed %08x", r.Height, r.BlockVersion, sub.version)
+		}
+		tv, _ := strconv.ParseUint(r.TemplateVersion, 16, 32)
+		if uint32(tv)&rollMask != 0 {
+			signalled[sub.mode]++
+			// bip310 and xor can never coincide when the template has mask bits.
+			if stratum.HasInterp(r.VersionInterp, "bip310") && stratum.HasInterp(r.VersionInterp, "xor") {
+				t.Fatalf("block %d: interpretation %q impossible with in-mask template %s", r.Height, r.VersionInterp, r.TemplateVersion)
+			}
+		} else if r.VersionInterp != "bip310+xor+or" {
+			t.Fatalf("block %d: template %s has no in-mask bits but interpretation is %q", r.Height, r.TemplateVersion, r.VersionInterp)
 		}
 		var hdr struct {
 			Confirmations int64 `json:"confirmations"`
@@ -611,8 +817,27 @@ func verifyChain(t *testing.T, a *Node, coin string, startHeight int64, external
 		if h, err := bitcoin.DecodeBIP34Height(cb.Inputs[0].Script); err != nil || h != r.Height {
 			t.Fatalf("block %d: BIP34 height %d %v", r.Height, h, err)
 		}
-		if !bytes.Contains(cb.Inputs[0].Script, []byte("/wizard-blocks-it/")) {
-			t.Fatalf("block %d: coinbase tag missing", r.Height)
+		if tagged[r.Hash] != bytes.Contains(cb.Inputs[0].Script, []byte("/wizard-blocks-it/")) {
+			t.Fatalf("block %d: coinbase tag presence %v, want %v", r.Height, !tagged[r.Hash], tagged[r.Hash])
+		}
+		if coin == "bch" {
+			// BCH (2018-11): every transaction, the coinbase included, >= 100 bytes.
+			if len(cb.Raw) < 100 {
+				t.Fatalf("block %d: coinbase is %d bytes (< 100)", r.Height, len(cb.Raw))
+			}
+			// Without a tag the scriptSig is <height><push 12 extranonce>;
+			// anything longer is the zero padding added to reach 100 bytes.
+			if !tagged[r.Hash] && len(cb.Inputs[0].Script) > len(bitcoin.BIP34HeightScript(r.Height))+1+12 {
+				if len(cb.Raw) > 101 {
+					t.Fatalf("block %d: padded coinbase is %d bytes (padding beyond minimum)", r.Height, len(cb.Raw))
+				}
+				padded++
+			}
+			for i := 2; i < len(blk.Txs); i++ {
+				if !bitcoin.CTORLess(blk.Txs[i-1].TxID, blk.Txs[i].TxID) {
+					t.Fatalf("block %d: CTOR violated", r.Height)
+				}
+			}
 		}
 		var bs struct {
 			Subsidy  json.RawMessage `json:"subsidy"`
@@ -673,10 +898,79 @@ func verifyChain(t *testing.T, a *Node, coin string, startHeight int64, external
 	if maxTxs < 200 {
 		t.Fatalf("largest engine block had %d txs, want >= 200", maxTxs)
 	}
+	if expectSignal {
+		for _, mode := range []string{"bip310", "xor", "or"} {
+			if signalled[mode] < 5 {
+				t.Errorf("only %d blocks with in-mask template version for %s miners (want >= 5): %v", signalled[mode], mode, signalled)
+			}
+		}
+	} else if len(signalled) != 0 {
+		t.Errorf("unexpected in-mask template versions: %v", signalled)
+	}
+	t.Logf("blocks on templates signalling inside the rolling mask, by miner mode: %v", signalled)
+	if coin == "bch" && len(tagged) < len(accepted) && padded == 0 {
+		t.Error("no tagless coinbase hit the 100-byte padding path")
+	}
+	t.Logf("subsidy eras covered: %d; coinbases padded to the 100-byte minimum: %d", len(halvings), padded)
 	types := map[string]bool{}
 	for _, r := range accepted {
 		types[r.Address] = true
 	}
 	t.Logf("%s: VERIFIED %d accepted blocks (heights %d..%d), %d external, largest block %d txs, total fees %d sats, %d distinct payout addresses",
 		coin, len(accepted), startHeight+1, final, external, maxTxs, totalFees, len(types))
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// testNodeRestart restarts the full node under a running engine: the engine
+// must survive the outage, keep miner sessions, reconnect RPC and ZMQ, and
+// resume issuing work that becomes accepted blocks.
+func testNodeRestart(t *testing.T, en *Engine, a *Node, rec *recorder) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	idle, err := testminer.Dial(en.E.StratumAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idle.Close()
+	if err := idle.Subscribe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := idle.Authorize(ctx, "idle", "x"); err != nil || !r.OK() {
+		t.Fatal("authorize idle")
+	}
+	j0, err := idle.WaitJob(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docker(t, "restart", "-t", "5", a.Name)
+	waitFor(t, "engine notices node outage", 60*time.Second, func() bool { return !en.E.Stats().Snapshot().Node.Connected })
+	waitFor(t, "node RPC back", 60*time.Second, func() bool { _, err := a.RPC.GetBlockchainInfo(ctx); return err == nil })
+	var none any
+	_ = a.Wallet.Call(ctx, "loadwallet", []any{"w"}, &none)
+	waitFor(t, "engine reconnected", 60*time.Second, func() bool {
+		s := en.E.Stats().Snapshot()
+		return s.Node.Connected && s.Node.ZMQConnected
+	})
+	before := en.acceptedBlocks()
+	m := startMiner(t, en, rec, "rig-restart", "bip310")
+	mineUntil(t, en, before+10, 3*time.Minute)
+	m.stop(t)
+	select {
+	case <-idle.Done():
+		t.Fatal("idle miner session dropped during node restart")
+	default:
+	}
+	_, _, _, _, j := idle.State()
+	if j == nil || bytes.Equal(j.PrevHash, j0.PrevHash) {
+		t.Fatal("idle session did not receive new work after restart")
+	}
+	t.Logf("node restart survived; %d blocks mined afterwards", en.acceptedBlocks()-before)
 }

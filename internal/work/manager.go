@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -272,6 +273,12 @@ func (m *Manager) refreshNodeStatus(ctx context.Context) {
 
 // update fetches a template and publishes it if anything changed.
 func (m *Manager) update(ctx context.Context, reason string) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Keep serving the previous work rather than dying on bad node data.
+			m.log.Error("panic while processing block template (recovered)", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+		}
+	}()
 	raw, err := m.rpc.GetBlockTemplate(ctx, m.cfg.Params.GBTRules)
 	if err != nil {
 		m.nodeError(err)
@@ -344,6 +351,9 @@ type Candidate struct {
 	Worker    string
 	ShareDiff float64
 	Stale     bool // job belongs to an outdated prevhash
+	// VersionInterp names the version-rolling interpretation(s) that produced
+	// Header.Version (see stratum/version.go).
+	VersionInterp string
 }
 
 // SubmitBlock submits a solved block in the background. It returns
@@ -359,6 +369,11 @@ func (m *Manager) SubmitBlock(c Candidate) {
 	m.submitWG.Add(1)
 	go func() {
 		defer m.submitWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				m.log.Error("panic during block submission (recovered)", "hash", hash.String(), "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			}
+		}()
 		m.submit(c, hash, block)
 	}()
 }
@@ -371,12 +386,15 @@ func (m *Manager) submit(c Candidate, hash bitcoin.Hash, block []byte) {
 	t := c.Job.Tmpl
 	rec := stats.BlockRecord{
 		Height: t.Height, Hash: hash.String(), Worker: c.Worker, Address: c.Job.PayoutAddr,
-		Reward: t.CoinbaseValue, Time: time.Now(), Status: "submitted",
+		Reward: t.CoinbaseValue, Time: time.Now(), Status: "pending",
 		ShareDiff: c.ShareDiff, NetworkDiff: t.NetworkDiff,
+		TemplateVersion: fmt.Sprintf("%08x", t.Version), BlockVersion: fmt.Sprintf("%08x", c.Header.Version),
+		VersionInterp: c.VersionInterp,
 	}
 	m.log.Log(context.Background(), logging.LevelBlock, "*** BLOCK FOUND — submitting ***",
 		"height", t.Height, "hash", rec.Hash, "worker", c.Worker, "payout", c.Job.PayoutAddr,
-		"reward_sats", t.CoinbaseValue, "txs", t.TxCount(), "stale_job", c.Stale)
+		"reward_sats", t.CoinbaseValue, "txs", t.TxCount(), "stale_job", c.Stale,
+		"template_version", rec.TemplateVersion, "block_version", rec.BlockVersion, "version_interp", c.VersionInterp)
 	m.st.BlockSubmitted(rec)
 
 	// Use a context independent of shutdown: a found block must be delivered.
@@ -409,7 +427,7 @@ func (m *Manager) submit(c Candidate, hash bitcoin.Hash, block []byte) {
 	}
 
 	// Verify acceptance: the block must be on the active chain.
-	status := rec.Status
+	status := rec.Status // "pending" until the node confirms the block on the active chain
 	for i := 0; i < 20; i++ {
 		hdr, herr := m.rpc.GetBlockHeader(ctx, rec.Hash)
 		if herr == nil {
@@ -428,7 +446,7 @@ func (m *Manager) submit(c Candidate, hash bitcoin.Hash, block []byte) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if status == "submitted" {
+	if status == "pending" {
 		// submitblock did not complain, yet the node does not know the header.
 		status, rec.Reason = "rejected", strings.TrimSpace(rec.Reason+" block unknown to node after submit")
 	}

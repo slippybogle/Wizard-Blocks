@@ -12,7 +12,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,8 +76,11 @@ func startNode(t *testing.T, coin, network, name string, extra ...string) *Node 
 		image = bchImage
 	}
 	args = append(args, extra...)
+	// Fixed host ports: Docker reassigns ephemeral ports when a container
+	// restarts, and the node-restart test needs stable endpoints.
 	run := []string{"run", "-d", "--name", name, "--network", network, "--network-alias", name,
-		"-p", "127.0.0.1::18443", "-p", "127.0.0.1::28332", "--entrypoint", "bitcoind", image}
+		"-p", fmt.Sprintf("127.0.0.1:%d:18443", freePort(t)), "-p", fmt.Sprintf("127.0.0.1:%d:28332", freePort(t)),
+		"--entrypoint", "bitcoind", image}
 	docker(t, append(run, args...)...)
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -275,4 +280,13 @@ func apiGet(t *testing.T, en *Engine, path string) []byte {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	return out
+}
+
+func freePort(t *testing.T) int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
 }

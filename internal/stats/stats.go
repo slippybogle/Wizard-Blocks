@@ -72,6 +72,7 @@ type Worker struct {
 	Rejects     map[string]uint64
 	BestDiff    float64
 	Difficulty  float64
+	Interps     map[string]uint64 // accepted shares by version-rolling interpretation
 	LastShare   time.Time
 	FirstSeen   time.Time
 	rate        rateWindow
@@ -79,16 +80,24 @@ type Worker struct {
 
 // BlockRecord describes a block candidate the engine submitted.
 type BlockRecord struct {
-	Height      int64     `json:"height"`
-	Hash        string    `json:"hash"`
-	Worker      string    `json:"worker"`
-	Address     string    `json:"address"`
-	Reward      int64     `json:"reward_sats"`
-	Time        time.Time `json:"time"`
-	Status      string    `json:"status"` // submitted | accepted | rejected | orphaned | stale
-	Reason      string    `json:"reason,omitempty"`
-	ShareDiff   float64   `json:"share_difficulty"`
-	NetworkDiff float64   `json:"network_difficulty"`
+	Height  int64     `json:"height"`
+	Hash    string    `json:"hash"`
+	Worker  string    `json:"worker"`
+	Address string    `json:"address"`
+	Reward  int64     `json:"reward_sats"`
+	Time    time.Time `json:"time"`
+	// Status: pending (submitted, not yet confirmed on the active chain) |
+	// accepted (confirmed on the active chain) | rejected | orphaned | stale.
+	// Only "accepted" counts as a found block.
+	Status      string  `json:"status"`
+	Reason      string  `json:"reason,omitempty"`
+	ShareDiff   float64 `json:"share_difficulty"`
+	NetworkDiff float64 `json:"network_difficulty"`
+	// Version rolling: template version, final header version and the
+	// interpretation(s) of the submitted version bits that produced it.
+	TemplateVersion string `json:"template_version"`
+	BlockVersion    string `json:"block_version"`
+	VersionInterp   string `json:"version_interpretation"`
 }
 
 // NodeStatus describes the full node connection.
@@ -193,7 +202,7 @@ func (c *Collector) Save() error {
 func (c *Collector) worker(name string) *Worker {
 	w := c.workers[name]
 	if w == nil {
-		w = &Worker{Name: name, Rejects: map[string]uint64{}, FirstSeen: time.Now()}
+		w = &Worker{Name: name, Rejects: map[string]uint64{}, Interps: map[string]uint64{}, FirstSeen: time.Now()}
 		c.workers[name] = w
 	}
 	return w
@@ -230,13 +239,14 @@ func (c *Collector) SetDifficulty(worker string, d float64) {
 }
 
 // ShareAccepted records an accepted share credited at shareDiff whose hash
-// achieved achieved difficulty.
-func (c *Collector) ShareAccepted(worker string, shareDiff, achieved float64) {
+// achieved achieved difficulty; interp is the version-rolling interpretation.
+func (c *Collector) ShareAccepted(worker string, shareDiff, achieved float64, interp string) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	w := c.worker(worker)
 	w.Accepted++
+	w.Interps[interp]++
 	w.LastShare = now
 	w.rate.add(now, shareDiff)
 	c.pool.add(now, shareDiff)
@@ -328,6 +338,7 @@ type WorkerSnapshot struct {
 	Accepted    uint64            `json:"shares_accepted"`
 	Rejected    uint64            `json:"shares_rejected"`
 	Rejects     map[string]uint64 `json:"rejects"`
+	Interps     map[string]uint64 `json:"version_interpretations"`
 	BestDiff    float64           `json:"best_share_difficulty"`
 	Difficulty  float64           `json:"difficulty"`
 	LastShare   *time.Time        `json:"last_share_at"`
@@ -335,17 +346,18 @@ type WorkerSnapshot struct {
 
 // PoolSnapshot aggregates all workers.
 type PoolSnapshot struct {
-	Hashrate1m  float64           `json:"hashrate_1m"`
-	Hashrate5m  float64           `json:"hashrate_5m"`
-	Hashrate1h  float64           `json:"hashrate_1h"`
-	Workers     int               `json:"workers_online"`
-	Connections int               `json:"connections"`
-	Accepted    uint64            `json:"shares_accepted"`
-	Rejected    uint64            `json:"shares_rejected"`
-	Rejects     map[string]uint64 `json:"rejects"`
-	BestDiff    float64           `json:"best_share_difficulty"`
-	BestWorker  string            `json:"best_share_worker"`
-	BlocksFound int               `json:"blocks_found"`
+	Hashrate1m    float64           `json:"hashrate_1m"`
+	Hashrate5m    float64           `json:"hashrate_5m"`
+	Hashrate1h    float64           `json:"hashrate_1h"`
+	Workers       int               `json:"workers_online"`
+	Connections   int               `json:"connections"`
+	Accepted      uint64            `json:"shares_accepted"`
+	Rejected      uint64            `json:"shares_rejected"`
+	Rejects       map[string]uint64 `json:"rejects"`
+	BestDiff      float64           `json:"best_share_difficulty"`
+	BestWorker    string            `json:"best_share_worker"`
+	BlocksFound   int               `json:"blocks_found"`   // confirmed on the active chain only
+	BlocksPending int               `json:"blocks_pending"` // submitted, awaiting confirmation
 }
 
 // Snapshot is the full JSON document served at /stats.
@@ -378,8 +390,11 @@ func (c *Collector) Snapshot() Snapshot {
 		Blocks: append([]BlockRecord{}, c.blocks...),
 	}
 	for _, b := range c.blocks {
-		if b.Status == "accepted" {
+		switch b.Status {
+		case "accepted":
 			s.Pool.BlocksFound++
+		case "pending":
+			s.Pool.BlocksPending++
 		}
 	}
 	for _, w := range c.workers {

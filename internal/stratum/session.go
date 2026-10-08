@@ -608,13 +608,9 @@ func (c *Session) handleSubmit(req request) {
 		return
 	}
 
-	// BIP310 version rolling. Primary interpretation per the BIP:
-	// version = (job & ~mask) | (bits & mask). Some firmware sends
-	// rolled ^ job instead; when the job version has bits inside the mask
-	// these differ, so both are tried. Any header that meets the target is
-	// a genuinely valid header, so this cannot yield an invalid block.
+	// Version rolling: see version.go for the interpretations in use.
 	jv := job.Tmpl.Version
-	versions := []uint32{jv}
+	cands := []versionCandidate{{jv, InterpNone}}
 	if len(ps) >= 6 && ps[5] != "" {
 		bits, ok := parseHex32(ps[5])
 		if !ok {
@@ -625,10 +621,7 @@ func (c *Session) handleSubmit(req request) {
 			c.reject(req.ID, worker, "invalid-version", serr(ErrOther, "version bits outside negotiated mask"))
 			return
 		}
-		versions[0] = jv&^mask | bits&mask
-		if jv&mask != 0 && jv^bits != versions[0] {
-			versions = append(versions, jv^bits)
-		}
+		cands = versionCandidates(jv, mask, bits)
 	}
 
 	now := time.Now().Unix()
@@ -641,14 +634,16 @@ func (c *Session) handleSubmit(req request) {
 	shareTarget := bitcoin.TargetFromDifficulty(required)
 
 	// Evaluate every admissible interpretation and keep the lowest hash. On
-	// mainnet at most one can meet a real target; on test chains with trivial
-	// targets this picks the header the miner actually worked on.
-	hdr := job.Header(c.en1Bytes, en2, ntime, nonce, versions[0])
+	// mainnet at most one can meet a real target (and they coincide unless the
+	// template signals inside the mask); on test chains with trivial targets
+	// this picks the header the miner actually worked on.
+	hdr := job.Header(c.en1Bytes, en2, ntime, nonce, cands[0].version)
 	hash := hdr.Hash()
-	for _, v := range versions[1:] {
-		h := job.Header(c.en1Bytes, en2, ntime, nonce, v)
+	interp := cands[0].interp
+	for _, vc := range cands[1:] {
+		h := job.Header(c.en1Bytes, en2, ntime, nonce, vc.version)
 		if hh := h.Hash(); bitcoin.HashToBig(hh).Cmp(bitcoin.HashToBig(hash)) < 0 {
-			hdr, hash = h, hh
+			hdr, hash, interp = h, hh, vc.interp
 		}
 	}
 	achieved := bitcoin.HashDifficulty(hash)
@@ -659,14 +654,14 @@ func (c *Session) handleSubmit(req request) {
 	if bitcoin.HashMeetsTarget(hash, job.Tmpl.Target) {
 		c.srv.mgr.SubmitBlock(work.Candidate{
 			Job: job, Header: hdr, En1: c.en1Bytes, En2: en2,
-			Worker: worker, ShareDiff: achieved, Stale: stale,
+			Worker: worker, ShareDiff: achieved, Stale: stale, VersionInterp: interp,
 		})
 		if !stale {
 			if c.srv.seen(job.Gen, hash) {
 				c.reject(req.ID, worker, "duplicate", serr(ErrDuplicate, "duplicate share"))
 				return
 			}
-			c.accept(req.ID, worker, required, achieved)
+			c.accept(req.ID, worker, required, achieved, interp, hash)
 			return
 		}
 	}
@@ -682,7 +677,7 @@ func (c *Session) handleSubmit(req request) {
 		c.reject(req.ID, worker, "duplicate", serr(ErrDuplicate, "duplicate share"))
 		return
 	}
-	c.accept(req.ID, worker, required, achieved)
+	c.accept(req.ID, worker, required, achieved, interp, hash)
 }
 
 func effectiveDiffOrRaw(d float64, w *work.Work) float64 {
@@ -692,9 +687,11 @@ func effectiveDiffOrRaw(d float64, w *work.Work) float64 {
 	return effectiveDiff(d, w)
 }
 
-func (c *Session) accept(id json.RawMessage, worker string, credited, achieved float64) {
+func (c *Session) accept(id json.RawMessage, worker string, credited, achieved float64, interp string, hash bitcoin.Hash) {
 	c.reply(id, true, nil)
-	c.srv.st.ShareAccepted(worker, credited, achieved)
+	c.srv.st.ShareAccepted(worker, credited, achieved, interp)
+	c.srv.log.Debug("share accepted", "ip", c.ip, "worker", worker, "hash", hash.String(),
+		"difficulty", achieved, "version_interp", interp)
 	c.mu.Lock()
 	nd, changed := c.vd.onShare(time.Now(), credited, c.diff)
 	if changed {
