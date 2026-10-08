@@ -65,6 +65,7 @@ function pxCanvas(text, color, cssPx) {
 
 // ---------- app ----------
 const scene = new Scene($('#scene'));
+scene.setOverlay($('#scene-labels'));
 const sound = new Sound();
 let prev = null;
 let state = null;
@@ -165,9 +166,21 @@ function setStat(key, value, color) {
 // In portrait the bottom HUD spans the full width: tell the scene so the
 // floor (and the wizard) stay visible above it.
 function syncInsets() {
-  const portrait = window.innerHeight > window.innerWidth;
-  const bottom = document.querySelector('.hud-bottom');
-  scene.setBottomInset(portrait && narrow() ? bottom.offsetHeight + 12 : 0);
+  // Portrait phones: the scene fills the band between the top and bottom
+  // HUD instead of sitting behind them (no empty sky, wizard never hidden).
+  const portrait = window.innerHeight > window.innerWidth && narrow();
+  const wrap = document.querySelector('.scene-wrap');
+  if (portrait) {
+    const top = document.querySelector('.hud-top');
+    const bottom = document.querySelector('.hud-bottom');
+    const page = document.querySelector('#page-mine');
+    wrap.style.top = (top.offsetTop + top.offsetHeight + 4) + 'px';
+    wrap.style.bottom = Math.max(0, page.clientHeight - bottom.offsetTop + 4) + 'px';
+  } else {
+    wrap.style.top = '0px';
+    wrap.style.bottom = '0px';
+  }
+  scene.setBottomInset(0);
 }
 
 function renderHUD(st) {
@@ -207,7 +220,11 @@ function renderHUD(st) {
 
   // Trophy wall: confirmed blocks only.
   const wall = $('#hud-trophies');
-  const confirmed = st.blocks.filter((b) => b.status === 'accepted' && b.chain_status !== 'orphaned');
+  // Trophy wall: matured blocks only. Blocks still collecting confirmations
+  // are shown in the scene, where the wizard digs them out.
+  const confirmed = st.blocks.filter((b) => b.chain_status === 'matured');
+  scene.setDigging(st.blocks.filter((b) => b.chain_status === 'confirming')
+    .map((b) => ({ height: b.height, conf: Math.max(0, b.confirmations), maturity: st.coin.coinbase_maturity })));
   const sig = confirmed.map((b) => b.hash + b.chain_status + b.confirmations).join(',') + narrow();
   if (wall._sig !== sig) {
     wall._sig = sig;
@@ -215,7 +232,7 @@ function renderHUD(st) {
     wall.append(pxCanvas('TROPHY WALL', C.ink3, narrow() ? 1 : 1.5));
     if (!confirmed.length) {
       const e = document.createElement('div'); e.className = 'empty';
-      e.append(pxCanvas('NO BLOCKS YET. KEEP DIGGING.', C.ink3, narrow() ? 1 : 1.5));
+      e.append(pxCanvas('NO MATURED BLOCKS YET', C.ink3, narrow() ? 1 : 1.5));
       wall.append(e);
     }
     const max = narrow() ? 6 : 12;
@@ -223,8 +240,7 @@ function renderHUD(st) {
       const a = document.createElement('a');
       a.className = 'trophy'; a.href = '#/ledger'; a.title = `Block ${b.height}`;
       a.title = `Block ${b.height}: ${confLabel(b, st.coin.coinbase_maturity)}`;
-      a.append(trophyIcon(i), pxCanvas('#' + b.height, b.chain_status === 'matured' ? C.gold : C.ink2, 1.5),
-        pxCanvas(b.chain_status === 'matured' ? 'MATURED' : `${Math.max(0, Math.min(b.confirmations, st.coin.coinbase_maturity))}/${st.coin.coinbase_maturity}`, C.ink3, 1));
+      a.append(trophyIcon(i), pxCanvas('#' + b.height, C.gold, 1.5));
       wall.append(a);
     });
     if (confirmed.length > max) wall.append(pxCanvas(`+${confirmed.length - max}`, C.ink3, 1.5));

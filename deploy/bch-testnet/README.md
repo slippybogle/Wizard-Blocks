@@ -7,7 +7,9 @@ It runs:
 - **bchn**: Bitcoin Cash Node 29.2.0 on **chipnet** (default) or **testnet4**.
   RPC and ZMQ are only reachable inside the compose network.
 - **engine**: Wizard-Blocks, built from this repository, connected to `bchn`.
-  Stratum is on host port **3335**, and the stats API is on `127.0.0.1:8090`.
+  Stratum is on host port **3335**, the web UI on **8421**, and the stats API
+  on `127.0.0.1:8090`. These ports differ from the mainnet setup (1776 / 8420)
+  so both stacks can run side by side.
 
 Both images are available for amd64 and arm64 (x86 Umbrel Home and Raspberry Pi).
 Testnet coins have no value. The point of this setup is to see your miner find
@@ -39,7 +41,13 @@ sed -i "s/^RPC_PASSWORD=.*/RPC_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr 
 nano .env        # optional: BCH_NETWORK=testnet4, ports, pruning
 ```
 
-Leave `PAYOUT_ADDRESS` empty for now.
+Leave `PAYOUT_ADDRESS` empty for now. To edit difficulty from the UI later,
+set `UI_ADMIN_PASSWORD` too:
+
+```sh
+sed -i "s/^UI_ADMIN_PASSWORD=.*/UI_ADMIN_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -d '/+=')/" .env
+grep UI_ADMIN_PASSWORD .env      # note it down
+```
 
 ## 4. Start the node and create a payout address
 
@@ -88,6 +96,16 @@ On a Bitaxe: open AxeOS, go to Settings, set Stratum URL `umbrel.local`, port
 
 ## 7. Watch it
 
+Open the web UI from any device on your LAN at **http://umbrel.local:8421**:
+
+- **The Mine** is the live pixel-art view: hashrate, the current job's creature,
+  the MANA (luck) bar and the trophy wall.
+- **The Ledger** has the full detail. Its **Settings** section (login with
+  `UI_ADMIN_PASSWORD`) changes VARDIFF_MIN / VARDIFF_MAX /
+  VARDIFF_TARGET_SECONDS / FIXED_DIFF and per-worker difficulty live.
+
+From the command line:
+
 ```sh
 docker compose logs -f engine | grep -E 'BLOCK|authorized|rejected'
 curl -s 127.0.0.1:8090/stats | head -60     # on the Umbrel
@@ -111,9 +129,22 @@ git pull && docker compose up -d --build   # update the engine
 docker compose down -v                  # stop AND delete chain + engine data
 ```
 
+## Difficulty
+
+There are two ways to set difficulty:
+
+- **Config**: set these in `.env`, then run `docker compose up -d`:
+  - `VARDIFF_MIN`, `VARDIFF_MAX`, `VARDIFF_TARGET_SECONDS`;
+  - `FIXED_DIFF`: a value > 0 disables vardiff.
+- **Per miner**: use the password `d=512`. It is clamped to VARDIFF_MIN..VARDIFF_MAX.
+
+Values saved from the Settings page override `.env` until you press **Reset to
+config** there.
+
 ## Troubleshooting
 
-- **Port 3335 in use**: change `STRATUM_PORT` in `.env`, then run `docker compose up -d`.
+- **Port 3335 or 8421 in use**: change `STRATUM_PORT` / `UI_PORT` in `.env`,
+  then run `docker compose up -d`. The UI shows miners the new port automatically.
 - **`node not reachable`**: check `docker compose logs bchn` and make sure
   `RPC_USER`/`RPC_PASSWORD` are unchanged since the node first started.
 - **`waiting for node to sync` never ends**: check that the node has peers with

@@ -480,6 +480,12 @@ type MineOptions struct {
 	// further block-solving shares on the same previous block (avoids racing
 	// our own blocks at the same height on regtest, where most shares solve).
 	OneBlockPerPrevHash bool
+	// NonBlockShares submits only shares that do NOT solve a block (hash
+	// above the network target), one per ShareInterval. On regtest every
+	// normal share is also a block; this exercises share-only paths
+	// (luck, creature tiers). Requires a share difficulty below network.
+	NonBlockShares bool
+	ShareInterval  time.Duration
 	// OnResult is called for every submit response.
 	OnResult func(job *Job, r *Response, hashHex string, version uint32)
 	// OnSubmit is called just before each share is sent.
@@ -573,6 +579,34 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 			}
 			h := Header(job, en1, en2, version, ntime, nonce)
 			be := HashBE(h)
+			if o.NonBlockShares {
+				hv := new(big.Int).SetBytes(be[:])
+				if hv.Cmp(netTarget) <= 0 || hv.Cmp(target) > 0 {
+					if nonce == 0xffffffff {
+						break
+					}
+					continue
+				}
+				if o.OnSubmit != nil {
+					o.OnSubmit(job, hex.EncodeToString(be[:]), version)
+				}
+				r, err := c.Submit(ctx, o.Worker, job.ID, hex.EncodeToString(en2), fmt.Sprintf("%08x", ntime), fmt.Sprintf("%08x", nonce), vhexFor(version, job.Version, mask, rollBits, o.VersionMode))
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+				if o.OnResult != nil {
+					o.OnResult(job, r, hex.EncodeToString(be[:]), version)
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(o.ShareInterval):
+				}
+				break
+			}
 			if leadingZeroBits(be) >= o.MinZeroBits && new(big.Int).SetBytes(be[:]).Cmp(target) <= 0 {
 				if o.OneBlockPerPrevHash && new(big.Int).SetBytes(be[:]).Cmp(netTarget) <= 0 {
 					if _, done := solved.LoadOrStore(string(job.PrevHash), true); done {
@@ -616,4 +650,19 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 			}
 		}
 	}
+}
+
+// vhexFor encodes submitted version bits for the given mode ("" if no mask).
+func vhexFor(version, jobVersion, mask, rollBits uint32, mode string) string {
+	if mask == 0 {
+		return ""
+	}
+	bits := version & mask
+	switch mode {
+	case "xor":
+		bits = version ^ jobVersion
+	case "or":
+		bits = rollBits
+	}
+	return fmt.Sprintf("%08x", bits)
 }

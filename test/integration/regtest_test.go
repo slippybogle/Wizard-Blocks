@@ -270,6 +270,7 @@ func runCoin(t *testing.T, cfg suite) {
 	if cfg.concurrent {
 		t.Run("ConcurrentMiners", func(t *testing.T) { testConcurrent(t, enA, a, rec, expectNonAccepted) })
 		t.Run("LiveDifficultySettings", func(t *testing.T) { testLiveDifficulty(t, enA, cfgA.DataDir) })
+		t.Run("CreaturesAndMana", func(t *testing.T) { testCreaturesAndMana(t, enA) })
 	}
 
 	// ZMQ must have been the primary new-block signal in phase A.
@@ -1158,4 +1159,132 @@ func testLiveDifficulty(t *testing.T, en *Engine, dataDir string) {
 		t.Fatal("reset did not delete the saved settings")
 	}
 	t.Log("live difficulty: fixed, password pin, per-worker override, clamping, validation, persistence and reset verified")
+}
+
+// testCreaturesAndMana mines shares that do not solve blocks (possible on
+// regtest only with a share difficulty below network difficulty) and checks
+// the UI state: creature rarity from the job's best share as a % of network
+// difficulty, and the MANA luck percentile filling since the last block.
+func testCreaturesAndMana(t *testing.T, en *Engine) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	uiBase := "http://" + en.E.UIAddr()
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar, Timeout: 10 * time.Second}
+	send := func(method, path string, body any) int {
+		b, _ := json.Marshal(body)
+		req, _ := http.NewRequest(method, uiBase+path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-WB-Admin", "1")
+		res, err := hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	if send("POST", "/api/admin/login", map[string]string{"password": "it-admin-pass"}) != 200 {
+		t.Fatal("login")
+	}
+	if send("PUT", "/api/admin/settings", map[string]any{"vardiff_min": 1e-12, "vardiff_max": 1000,
+		"vardiff_target_seconds": 10, "fixed_diff": 1e-11, "worker_overrides": map[string]float64{}}) != 200 {
+		t.Fatal("PUT fixed_diff")
+	}
+	defer send("POST", "/api/admin/settings/reset", nil)
+
+	c, err := testminer.Dial(en.E.StratumAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Configure(ctx, 0x1fffe000); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Subscribe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := c.Authorize(ctx, "beastmaster", "x"); err != nil || !r.OK() {
+		t.Fatal("authorize")
+	}
+	waitFor(t, "fixed difficulty", 5*time.Second, func() bool { _, _, _, d, _ := c.State(); return d == 1e-11 })
+	var accepted, rejected atomic.Int64
+	mctx, mcancel := context.WithTimeout(ctx, 4*time.Second)
+	_ = c.Mine(mctx, testminer.MineOptions{Worker: "beastmaster", Threads: 1, RollVersion: true, NonBlockShares: true,
+		ShareInterval: 50 * time.Millisecond, OnResult: func(_ *testminer.Job, r *testminer.Response, _ string, _ uint32) {
+			if r.OK() {
+				accepted.Add(1)
+			} else {
+				rejected.Add(1)
+			}
+		}})
+	mcancel()
+	if accepted.Load() < 10 || rejected.Load() != 0 {
+		t.Fatalf("non-block shares: accepted %d rejected %d", accepted.Load(), rejected.Load())
+	}
+	res, err := http.Get(uiBase + "/api/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		Derived struct {
+			Luck *float64 `json:"luck_since_last_block_pct"`
+		} `json:"derived"`
+		Pool struct {
+			Luck struct {
+				SumDiff  float64 `json:"sum_difficulty"`
+				BestDiff float64 `json:"best_difficulty"`
+				Shares   int     `json:"shares"`
+			} `json:"luck_since_last_block"`
+		} `json:"pool"`
+		Rounds []struct {
+			Current  bool    `json:"current"`
+			Shares   int     `json:"shares"`
+			Pct      float64 `json:"pct_of_network"`
+			Tier     int     `json:"tier"`
+			Rarity   string  `json:"rarity"`
+			Creature string  `json:"creature"`
+		} `json:"rounds"`
+	}
+	json.NewDecoder(res.Body).Decode(&st)
+	res.Body.Close()
+	var cur *struct {
+		Current  bool    `json:"current"`
+		Shares   int     `json:"shares"`
+		Pct      float64 `json:"pct_of_network"`
+		Tier     int     `json:"tier"`
+		Rarity   string  `json:"rarity"`
+		Creature string  `json:"creature"`
+	}
+	for i := range st.Rounds {
+		if st.Rounds[i].Current {
+			cur = &st.Rounds[i]
+		}
+	}
+	if cur == nil || cur.Shares < 1 {
+		t.Fatalf("no current job with shares: %+v", st.Rounds)
+	}
+	// Non-block shares have hashes above the network target: 0 < pct < 100.
+	want := "Common"
+	switch {
+	case cur.Pct >= 90:
+		want = "Legendary"
+	case cur.Pct >= 76.7:
+		want = "Epic"
+	case cur.Pct >= 63.3:
+		want = "Rare"
+	case cur.Pct >= 50:
+		want = "Uncommon"
+	}
+	if cur.Pct <= 0 || cur.Pct >= 100 || cur.Rarity != want || cur.Tier > 4 {
+		t.Fatalf("creature %s/%s at %.3f%% of network (want %s)", cur.Rarity, cur.Creature, cur.Pct, want)
+	}
+	l := st.Pool.Luck
+	if st.Derived.Luck == nil || l.Shares < int(accepted.Load()) || l.BestDiff <= 0 {
+		t.Fatalf("mana luck not filled: %+v %+v", st.Derived.Luck, l)
+	}
+	if exp := math.Exp(-l.SumDiff/l.BestDiff) * 100; math.Abs(exp-*st.Derived.Luck) > 1e-6 {
+		t.Fatalf("luck %v, want exp(-S/D) = %v", *st.Derived.Luck, exp)
+	}
+	t.Logf("%d non-block shares: job creature %s (%s) at %.2f%% of network difficulty; MANA luck %.2f%%",
+		accepted.Load(), cur.Creature, cur.Rarity, cur.Pct, *st.Derived.Luck)
 }

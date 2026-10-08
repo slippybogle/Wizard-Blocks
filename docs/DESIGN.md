@@ -57,7 +57,8 @@ audit surface small.
 | `internal/stratum` | TCP server, sessions, protocol, vardiff, rate limits |
 | `internal/stats` | counters, per-worker hashrate windows, JSON + Prometheus HTTP |
 | `internal/config` | JSON config + env overrides + validation |
-| `internal/engine` | wiring, startup checks, graceful shutdown |
+| `internal/engine` | wiring, startup checks, graceful shutdown, saved difficulty settings |
+| `internal/ui` | web UI: embedded static files, `/api/state`, SSE `/api/events`, hashrate history, node detail polling, authenticated settings API |
 | `internal/testminer` | CPU Stratum V1 miner with version rolling (test harness + `cmd/testminer`) |
 | `test/integration` | regtest harness (Docker) — build tag `integration` |
 
@@ -127,7 +128,8 @@ sequence=ffffffff | outputs | locktime=0
     "coinbase_tag": "/wizard-blocks/"
   },
   "stratum": {
-    "listen": "0.0.0.0:3333",
+    "listen": "0.0.0.0:1776",
+    "public_port": 0,                    // port shown to miners if Docker maps another host port
     "extranonce2_size": 8,
     "version_rolling_mask": "1fffe000",
     "max_connections": 1024, "max_connections_per_ip": 64,
@@ -135,12 +137,41 @@ sequence=ffffffff | outputs | locktime=0
     "max_line_bytes": 16384, "msg_rate_per_s": 100, "msg_burst": 500
   },
   "vardiff": { "initial": 1024, "min": 1, "max": 1e15,
-               "target_share_s": 10, "retarget_s": 60, "variance_pct": 30 },
+               "target_share_s": 10,             // VARDIFF_TARGET_SECONDS
+               "fixed_diff": 0,                  // FIXED_DIFF: > 0 disables vardiff
+               "retarget_s": 60, "variance_pct": 30 },
   "api": { "listen": "127.0.0.1:8080", "prometheus": true },
+  "ui":  { "listen": "0.0.0.0:8420", "admin_password": "" },   // "" listen disables the UI
   "log": { "level": "info", "format": "json" },
   "data_dir": ""                         // persist found blocks / best diff if set
 }
 ```
+
+## Web UI (internal/ui)
+
+The UI only reads engine state, apart from the authenticated difficulty settings.
+
+- **Delivery**: vanilla JS modules, canvas and Web Audio, embedded with `go:embed`.
+  - CSP is `default-src 'self'`: no third-party resources and no inline scripts or styles.
+  - `/api/events` streams the full state once per second (Server-Sent Events).
+- **Read-only stats added for it**:
+  - per-job rounds: best share, summed share difficulty, network difficulty;
+  - luck since the last found block (reset only when a block is confirmed accepted);
+  - node detail polled every 10 s: peers, mempool, uptime, disk, network hashrate;
+  - pool hashrate history at 1 h / 24 h / 7 d resolution, persisted;
+  - block confirmations.
+- **Celebration rule**: the client celebrates only when `blocks_found` increases
+  *and* a block record newly reaches `accepted`. `pending` blocks only show a
+  neutral notice. This is `events.js`, a pure function.
+- **Creature rarity**: best share ÷ network difficulty. Luck percentile =
+  exp(−S/D) × 100, with S = summed credited share difficulty and D = best share.
+- **Difficulty settings**: `stratum.DiffSettings` sits behind an atomic pointer.
+  Updates are validated, then re-applied to every session (`set_difficulty` plus a
+  re-notify under a fresh job id) and persisted by the engine.
+  - The settings API exists only on the UI listener.
+  - It needs an HMAC-signed HttpOnly SameSite=Strict session from
+    `ui.admin_password`, plus an `X-WB-Admin` header and same-origin check on changes.
+  - Logins are rate-limited.
 
 ## Ambiguities and risks (and decisions)
 

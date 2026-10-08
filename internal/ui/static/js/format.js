@@ -53,7 +53,9 @@ export function fmtPct(p, maxDigits = 3) {
   if (p >= 99.995 && p < 100) return '>99.99%';
   if (p < 0.0001) return p.toExponential(2).replace('e', 'E') + '%';
   if (p < 1) return p.toPrecision(maxDigits) + '%';
-  return p.toFixed(p >= 10 ? 1 : 2) + '%';
+  // Truncate (never round up): 99.97% must not read as 100.0%.
+  const d = p >= 10 ? 1 : 2, f = 10 ** d;
+  return (Math.floor(p * f) / f).toFixed(d) + '%';
 }
 
 export function fmtBytes(b) {

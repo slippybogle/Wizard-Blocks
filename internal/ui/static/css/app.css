@@ -199,3 +199,6 @@ input[aria-invalid="true"] { border-color: var(--red); }
 @keyframes managlow { 50% { filter: drop-shadow(0 0 7px #8f7dffdd); } }
 @media (max-width: 640px) { .stat.wide { grid-column: 1 / -1; } #hud-loot { grid-template-columns: repeat(3, auto); } }
 @media (prefers-reduced-motion: reduce) { .mana-bar { animation: none; } }
+
+#scene-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.scene-label { position: absolute; left: 0; top: 0; filter: drop-shadow(1px 1px 0 #000) drop-shadow(-1px 0 0 #000); }

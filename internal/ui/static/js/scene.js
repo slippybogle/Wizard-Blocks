@@ -5,7 +5,7 @@ import {
   WIZARD_KEYS, WIZARD_BODY, WIZARD_BLINK_ROW, WIZARD_LEGS, SHOULDER,
   CREATURE, CREATURE_HORNS, CREATURE_COLORS, DRAGON, LEGENDARY, BUBBLE_Q, MINECART,
 } from './sprites.js';
-import { drawTextBuf, textWidth } from './font.js';
+import { drawTextBuf, textWidth, setPixelText } from './font.js';
 
 // ---------- colour helpers ----------
 
@@ -90,6 +90,28 @@ export class Scene {
     this._loop = (ts) => this.frame(ts);
   }
 
+  // Scene labels are DOM overlays (pixel font at a small, crisp size) that
+  // track objects in the scene; scene pixels are too large for small text.
+  setOverlay(el) { this.overlay = el; this.labelEls = {}; }
+  label(key, text, x, y, color) {
+    if (!this.overlay) return;
+    let el = this.labelEls[key];
+    if (!el) {
+      el = document.createElement('canvas');
+      el.className = 'pxtext scene-label';
+      this.overlay.append(el);
+      this.labelEls[key] = el;
+    }
+    const narrow = window.matchMedia('(max-width: 640px), (max-height: 460px)').matches;
+    setPixelText(el, text, color, narrow ? 1 : 1.5);
+    const k = this.cssPerPx || 1;
+    const w = parseFloat(el.style.width) || 0, h = parseFloat(el.style.height) || 0;
+    const maxX = this.W * k - w - 4;
+    const left = Math.max(4, Math.min(maxX, x * k - w / 2));
+    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(y * k - h)}px)`;
+    el.hidden = false;
+    this.labelSeen[key] = true;
+  }
   on(ev, fn) { (this.listeners[ev] ||= []).push(fn); }
   emit(ev, ...a) { for (const f of this.listeners[ev] || []) f(...a); }
 
@@ -108,6 +130,9 @@ export class Scene {
     if (!respawn && this.creature && !this.creature.leaving && this.creature.tier === tier) return;
     this.creature = { tier, name, t: 0, leaving: false, leaveT: 0 }; // name shows briefly; the HUD keeps it
   }
+  // Blocks found but not yet matured: shown as a glowing block in the floor
+  // that the wizard digs at, with its confirmation progress.
+  setDigging(list) { this.digging = list || []; }
   setCreatureName(name) { if (this.creature && !this.creature.leaving) this.creature.name = name; }
   hideCreature() { if (this.creature) this.creature.leaving = true; }
 
@@ -135,6 +160,7 @@ export class Scene {
     this.canvas.width = W; this.canvas.height = H;
     this.canvas.style.width = (W * scale) / dpr + 'px';
     this.canvas.style.height = (H * scale) / dpr + 'px';
+    this.cssPerPx = scale / dpr;
     this.img = this.ctx.createImageData(W, H);
     this.buf = new Uint32Array(this.img.data.buffer);
     // Keep the floor above a full-width bottom HUD (portrait phones).
@@ -226,7 +252,9 @@ export class Scene {
       if (y < 0 || y >= H) return;
       mid[y * MID_W + (((x % MID_W) + MID_W) % MID_W)] = c;
     };
-    const ceil = Math.max(10, fy - 118);
+    // Roof: 118 px above the floor, or higher up on tall (portrait) scenes
+    // so the timber frame fills the view instead of empty rock.
+    const ceil = Math.max(10, Math.min(fy - 118, Math.round(H * 0.2)));
     // Roof timber (continuous) with grain.
     for (let x = 0; x < MID_W; x++) {
       for (let y = ceil; y < ceil + 7; y++) {
@@ -535,8 +563,11 @@ export class Scene {
     this.drawMist();
     this.drawWizard();
     this.drawParticles();
+    this.labelSeen = {};
+    this.drawDigging();
     this.drawCreature();
     this.drawCongrats();
+    for (const [k, el] of Object.entries(this.labelEls || {})) if (!this.labelSeen[k]) el.hidden = true;
     if (this.flashT > 0) this.flash(this.flashT / 0.35);
     this.ctx.putImageData(this.img, 0, 0);
   }
@@ -699,7 +730,7 @@ export class Scene {
     const enter = Math.min(1, cr.t / 0.6), leave = cr.leaving ? Math.min(1, cr.leaveT / 0.6) : 0;
     const hop = Math.abs(Math.sin(cr.t * (dragon ? 3 : 5))) * (dragon ? 6 : 4);
     const w = rows[0].length * scale, h = rows.length * scale;
-    const x0 = Math.round(this.W * 0.76 - w / 2 + (1 - enter) * 60 + leave * 80);
+    const x0 = Math.round(this.W * 0.8 - w / 2 + (1 - enter) * 60 + leave * 80);
     const y0 = Math.round(this.floorY + 12 - h - hop);
     const colorOf = (ch, x, y) => ({ K: this.keys.K, C, c, W: this.white, Y: this.gold[0], R: this.pal[RAIN + ((x + y) & 15)] })[ch];
     for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[0].length; x++) {
@@ -708,11 +739,31 @@ export class Scene {
       const col = colorOf(ch, x, y);
       for (let sy = 0; sy < scale; sy++) for (let sx = 0; sx < scale; sx++) this.px(x0 + x * scale + sx, y0 + y * scale + sy, col);
     }
-    if (cr.t > 3) return; // label only right after it appears or evolves
-    const label = cr.name.toUpperCase();
-    const lw = textWidth(label);
-    const lx = Math.max(2, Math.min(this.W - lw - 2, Math.round(x0 + w / 2 - lw / 2)));
-    drawTextBuf(this.buf, this.W, this.H, label, lx, y0 - 11, this.white, this.keys.K);
+    if (this.congrats) return; // keep the celebration uncluttered
+    this.label('creature', cr.name.toUpperCase(), x0 + w / 2, y0 - 2, '#ffffff');
+  }
+
+  drawDigging() {
+    const list = this.digging;
+    if (!list || !list.length || this.congrats) return;
+    const b = list[0];
+    const x0 = Math.round(this.W * 0.64), y0 = this.floorY + 2;
+    // A glowing gem block half-buried in the floor.
+    const pulse = Math.floor(this.t * 6);
+    for (let y = 0; y < 9; y++) for (let x = 0; x < 9; x++) {
+      const edge = x === 0 || y === 0 || x === 8 || y === 8;
+      this.px(x0 + x, y0 + y, edge ? this.gold[(x + y + pulse) % 2 ? 0 : 1] : this.pal[RAIN + ((x + y + pulse) & 15)]);
+    }
+    for (let dy = -3; dy <= 11; dy++) for (let dx = -3; dx <= 11; dx++) {
+      const d = Math.hypot(dx - 4, dy - 4);
+      if (d > 6 && d < 7.5 && bayer(x0 + dx, y0 + dy) < 0.5) this.px(x0 + dx, y0 + dy, this.pal[GLOW + ((dx + pulse) & 15)]);
+    }
+    // Progress bar: confirmations toward maturity.
+    const frac = Math.max(0, Math.min(1, b.conf / b.maturity));
+    for (let x = -1; x < 12; x++) { this.px(x0 - 1 + x, y0 + 11, this.keys.K); this.px(x0 - 1 + x, y0 + 14, this.keys.K); }
+    for (let x = 0; x < 11; x++) for (let y = 12; y < 14; y++) this.px(x0 - 1 + x, y0 + y, x < Math.round(frac * 11) ? this.pal[RAIN + ((x + pulse) & 15)] : this.pal[24]);
+    const label = `#${b.height} ${Math.min(b.conf, b.maturity)}/${b.maturity}` + (list.length > 1 ? ` +${list.length - 1} MORE` : '');
+    this.label('digging', label, x0 + 4, y0 + 22, '#ffd166');
   }
 
   // Confirmed block: a small rainbow with "CONGRATULATIONS WIZARD!".
@@ -720,7 +771,7 @@ export class Scene {
     const cg = this.congrats;
     if (!cg) return;
     const g = this.pose();
-    const cx = g.ox + 8, top = Math.max(14, g.oy - 30);
+    const cx = g.ox + 8, top = Math.max(14, g.oy - 26); // arc spans top+4..top+20
     const grow = Math.min(1, cg.t / 0.8);
     for (let band = 0; band < 6; band++) {
       const r = Math.round((12 - band) * grow) + 4;
@@ -733,7 +784,7 @@ export class Scene {
     const text = 'CONGRATULATIONS WIZARD!';
     const tw = textWidth(text);
     let x = Math.max(2, Math.min(this.W - tw - 2, cx - Math.round(tw / 2)));
-    const y = top - 2 + Math.round(Math.sin(cg.t * 4) * 1.5);
+    const y = top - 7 + Math.round(Math.sin(cg.t * 4)); // 7-px text ending 3 px above the arc
     [...text].forEach((ch, i) => {
       const col = this.pal[RAIN + ((i + Math.floor(this.t * 16)) & 15)];
       drawTextBuf(this.buf, this.W, this.H, ch, x, y, col, this.keys.K);
