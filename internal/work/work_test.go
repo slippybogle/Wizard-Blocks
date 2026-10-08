@@ -303,3 +303,20 @@ func mustHex(s string) []byte {
 	}
 	return b
 }
+
+func TestMinShareTime(t *testing.T) {
+	raw := &node.BlockTemplate{
+		Version: 536870912, PreviousBlockHash: "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+		CoinbaseValue: 5000000000, MinTime: 1000, CurTime: 5000, Bits: "1d00ffff", Height: 10,
+	}
+	p, _ := ParamsFor(address.BCH)
+	for chain, want := range map[string]uint32{"main": 1000, "regtest": 1000, "chip": 5000, "test4": 5000, "test": 5000} {
+		tmpl, err := NewTemplate(raw, p, chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tmpl.MinShareTime != want {
+			t.Errorf("%s: MinShareTime %d want %d", chain, tmpl.MinShareTime, want)
+		}
+	}
+}

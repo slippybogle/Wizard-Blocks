@@ -39,14 +39,18 @@ func ParamsFor(c address.Coin) (CoinParams, error) {
 
 // Template is a verified, preprocessed getblocktemplate result.
 type Template struct {
-	Height        int64
-	PrevHash      bitcoin.Hash // internal byte order
-	Version       uint32
-	Bits          uint32
-	Target        *big.Int // network target decoded from Bits
-	NetworkDiff   float64
-	CurTime       uint32
-	MinTime       uint32
+	Height      int64
+	PrevHash    bitcoin.Hash // internal byte order
+	Version     uint32
+	Bits        uint32
+	Target      *big.Int // network target decoded from Bits
+	NetworkDiff float64
+	CurTime     uint32
+	MinTime     uint32
+	// MinShareTime is the earliest ntime accepted in shares. It equals
+	// MinTime, except on chains with the testnet 20-minute minimum-difficulty
+	// rule, where Bits are only valid for timestamps >= CurTime.
+	MinShareTime  uint32
 	CoinbaseValue int64
 	TotalFees     int64
 	TxIDs         []bitcoin.Hash // non-coinbase txids in block order
@@ -111,6 +115,10 @@ func NewTemplate(raw *node.BlockTemplate, p CoinParams, chain string) (*Template
 		return nil, fmt.Errorf("template times cur=%d min=%d invalid", raw.CurTime, raw.MinTime)
 	}
 	t.CurTime, t.MinTime = uint32(raw.CurTime), uint32(raw.MinTime)
+	t.MinShareTime = t.MinTime
+	if AllowsMinDifficulty(chain) {
+		t.MinShareTime = t.CurTime
+	}
 
 	halving := int64(210000)
 	if chain == "regtest" {
@@ -198,6 +206,18 @@ func NewTemplate(raw *node.BlockTemplate, p CoinParams, chain string) (*Template
 		return nil, errors.New("unexpected witness commitment in non-segwit template")
 	}
 	return t, nil
+}
+
+// AllowsMinDifficulty reports whether a chain has the testnet rule that
+// lets a block use the minimum difficulty when its timestamp is more than 20
+// minutes after its parent (fPowAllowMinDifficultyBlocks without
+// fPowNoRetargeting). On such chains the template's bits depend on its time.
+func AllowsMinDifficulty(chain string) bool {
+	switch chain {
+	case "test", "testnet4", "test4", "chip", "chipnet", "scale":
+		return true
+	}
+	return false
 }
 
 func hasRule(rules []string, r string) bool {

@@ -52,7 +52,7 @@ func NetworkFor(coin Coin, chain string) (*Network, error) {
 		switch chain {
 		case "main":
 			n.PubKeyHash, n.ScriptHash, n.CashPrefix = 0x00, 0x05, "bitcoincash"
-		case "test", "test4", "testnet4", "scale", "chipnet":
+		case "test", "test4", "testnet4", "scale", "chip", "chipnet": // BCHN reports "chip" and "test4"
 			n.PubKeyHash, n.ScriptHash, n.CashPrefix = 0x6f, 0xc4, "bchtest"
 		case "regtest":
 			n.PubKeyHash, n.ScriptHash, n.CashPrefix = 0x6f, 0xc4, "bchreg"

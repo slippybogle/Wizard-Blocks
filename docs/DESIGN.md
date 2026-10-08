@@ -42,7 +42,8 @@ audit surface small.
    root (branch) → 80-byte header with negotiated version-rolling mask →
    SHA256d. If hash ≤ network target: assemble block and submit **before**
    anything else (async, retried on transport errors), then verify with
-   `getblockheader` (confirmations ≥ 1). Then share target check, duplicate
+   `getblockheader` (confirmations ≥ 1). A block is `pending` until then and
+   only `accepted` blocks count as found. Then share target check, duplicate
    check (keyed by header hash per generation), stats, vardiff.
 
 ## Packages
@@ -80,10 +81,22 @@ sequence=ffffffff | outputs | locktime=0
 
 * `mining.subscribe` → `[[["mining.set_difficulty",id],["mining.notify",id]], en1, en2_size]`.
 * `mining.configure` (BIP310) → version-rolling mask = miner mask ∧ server mask
-  (default `1fffe000`, BIP320). Submitted version: `(job.version & ~mask) | (bits & mask)`;
-  bits outside mask rejected. If `job.version & mask ≠ 0` the XOR interpretation
-  some firmware uses is also tried; any header that hashes under target is a
-  genuinely valid header, so this cannot produce an invalid block.
+  (default `1fffe000`, BIP320). Submitted bits outside the mask are rejected.
+  Implementations disagree on applying the bits (checked against their sources):
+
+  | interpretation | header version | used by |
+  |---|---|---|
+  | `bip310` | `(job & ~mask) \| bits` | BIP310 text |
+  | `xor` | `job ^ bits` | public-pool; ESP-Miner (Bitaxe/NerdQaxe) submits `rolled ^ job` |
+  | `or` | `job \| bits` | ckpool (SV1); cgminer/bmminer (Antminer) submit the OR'd bits |
+
+  They are identical whenever the job version has no bits inside the mask
+  (normal mainnet, `0x20000000`). When a template signals a BIP9 deployment
+  inside the mask (regtest `testdummy`, bit 28) they differ; the server
+  evaluates each distinct candidate and keeps the lowest hash. Each candidate
+  keeps the job's bits outside the mask, so any one meeting the target is a
+  valid block. The interpretation used is logged per share and stored per
+  block (`version_interpretation`, `template_version`, `block_version`).
 * `mining.authorize`: `fixed` mode — any username, blocks pay the config
   address; `miner` mode — username must be `<address>[.<worker>]`, validated
   locally + by node, blocks pay that address. Password `d=<diff>` sets start difficulty.
@@ -131,9 +144,10 @@ sequence=ffffffff | outputs | locktime=0
 
 ## Ambiguities and risks (and decisions)
 
-1. **BIP310 `version_bits` semantics** — spec says header version =
-   `(job & ~mask) | (bits & mask)`; some firmware sends `job ^ rolled`. Identical
-   when `job & mask == 0` (normal mainnet). Handled by trying both (see above).
+1. **BIP310 `version_bits` semantics**: three interpretations in the wild
+   (table above). Identical when `job & mask == 0`; otherwise all are
+   evaluated and the lowest hash is kept. Tests assert the server always picks the
+   exact header the test miner hashed, for miners in each of the three modes.
 2. **Difficulty change timing** — stratum leaves it unspecified whether a new
    difficulty applies to the current job. We record the difficulty per
    (session, job) at notify time, accept `min(job diff, current diff)`, and re-notify

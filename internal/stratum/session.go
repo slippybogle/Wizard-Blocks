@@ -625,7 +625,7 @@ func (c *Session) handleSubmit(req request) {
 	}
 
 	now := time.Now().Unix()
-	if ntime < job.Tmpl.MinTime || int64(ntime) > now+maxFutureTime {
+	if ntime < job.Tmpl.MinShareTime || int64(ntime) > now+maxFutureTime {
 		c.reject(req.ID, worker, "invalid-ntime", serr(ErrOther, "ntime out of range"))
 		return
 	}

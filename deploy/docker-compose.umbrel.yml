@@ -1,0 +1,57 @@
+# Example compose for Umbrel (or any Docker host). One engine per coin.
+#
+# Fill in the node connection for your setup. On Umbrel, the Bitcoin Node
+# app exports APP_BITCOIN_NODE_IP / APP_BITCOIN_RPC_PORT / APP_BITCOIN_RPC_USER /
+# APP_BITCOIN_RPC_PASS / APP_BITCOIN_ZMQ_HASHBLOCK_PORT to dependent apps.
+# Umbrel has no official BCHN app: point the BCH engine at your BCHN node's
+# RPC + ZMQ (bitcoind.conf: server=1, rpcallowip=<docker subnet>,
+# zmqpubhashblock=tcp://0.0.0.0:28332).
+#
+# The payout address is checked locally AND with the node's validateaddress;
+# the engine refuses to start if they disagree or the address is invalid.
+services:
+  wizard-blocks-bch:
+    image: wizard-blocks:latest
+    build: ..
+    restart: unless-stopped
+    stop_grace_period: 90s          # lets an in-flight block submission finish
+    environment:
+      WB_COIN: bch
+      WB_RPC_URL: http://${BCH_NODE_IP:-10.21.21.50}:${BCH_RPC_PORT:-8332}
+      WB_RPC_USER: ${BCH_RPC_USER:?set BCH_RPC_USER}
+      WB_RPC_PASSWORD: ${BCH_RPC_PASS:?set BCH_RPC_PASS}
+      WB_ZMQ_HASHBLOCK: tcp://${BCH_NODE_IP:-10.21.21.50}:${BCH_ZMQ_HASHBLOCK_PORT:-28332}
+      WB_PAYOUT_MODE: fixed          # or "miner": username = payout address
+      WB_PAYOUT_ADDRESS: ${BCH_PAYOUT_ADDRESS:?set BCH_PAYOUT_ADDRESS}
+      WB_COINBASE_TAG: /wizard-blocks/
+      WB_LOG_FORMAT: json
+    ports:
+      - "3333:3333"                  # Stratum for miners on your LAN
+      - "127.0.0.1:8080:8080"        # stats JSON / Prometheus (local only)
+    volumes:
+      - bch-data:/data
+
+  # BTC engine (same image, different coin). Disabled by default.
+  wizard-blocks-btc:
+    profiles: ["btc"]
+    image: wizard-blocks:latest
+    build: ..
+    restart: unless-stopped
+    stop_grace_period: 90s
+    environment:
+      WB_COIN: btc
+      WB_RPC_URL: http://${APP_BITCOIN_NODE_IP}:${APP_BITCOIN_RPC_PORT:-8332}
+      WB_RPC_USER: ${APP_BITCOIN_RPC_USER}
+      WB_RPC_PASSWORD: ${APP_BITCOIN_RPC_PASS}
+      WB_ZMQ_HASHBLOCK: tcp://${APP_BITCOIN_NODE_IP}:${APP_BITCOIN_ZMQ_HASHBLOCK_PORT:-28334}
+      WB_PAYOUT_MODE: fixed
+      WB_PAYOUT_ADDRESS: ${BTC_PAYOUT_ADDRESS:?set BTC_PAYOUT_ADDRESS}
+    ports:
+      - "3334:3333"
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - btc-data:/data
+
+volumes:
+  bch-data:
+  btc-data:

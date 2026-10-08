@@ -320,3 +320,14 @@ func FuzzDecode(f *testing.F) {
 		}
 	})
 }
+
+func TestBCHNChainNames(t *testing.T) {
+	// Values of getblockchaininfo.chain reported by BCHN 29 (verified live).
+	for chain, prefix := range map[string]string{"main": "bitcoincash", "test": "bchtest", "test4": "bchtest",
+		"chip": "bchtest", "scale": "bchtest", "regtest": "bchreg"} {
+		n, err := NetworkFor(BCH, chain)
+		if err != nil || n.CashPrefix != prefix {
+			t.Errorf("%s: %v %v", chain, n, err)
+		}
+	}
+}
