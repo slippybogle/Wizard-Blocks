@@ -267,8 +267,8 @@ func TestBech32Vectors(t *testing.T) {
 		"bc1zw508d6qejxtdg4y5r3zarvaryvaxxpcs",                           // v2, refused
 		"bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4\x00",
 		"tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7", // wrong network
-		"bc1qr508d6qejxtdg4y5r3zarvaryvq37j7u2",                         // bad v0 length
-		"bc1zw508d6qejxtdg4y5r3zarvaryvqyzf3du",                         // invalid padding
+		"bc1qr508d6qejxtdg4y5r3zarvaryvq37j7u2",                          // bad v0 length
+		"bc1zw508d6qejxtdg4y5r3zarvaryvqyzf3du",                          // invalid padding
 		"BC1QW508d6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4",                     // mixed case
 	}
 	for _, s := range invalid {
