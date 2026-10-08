@@ -33,10 +33,10 @@ services:
       WB_FIXED_DIFF: ${FIXED_DIFF:-0}
       # Web UI. Settings page needs a password (empty = settings read-only).
       WB_UI_ADMIN_PASSWORD: ${UI_ADMIN_PASSWORD:-}
-      WB_STRATUM_LISTEN: 0.0.0.0:1776            # inside the container
-      WB_STRATUM_PUBLIC_PORT: ${STRATUM_PORT:-1776}  # shown to miners in the UI
+      WB_STRATUM_LISTEN: 0.0.0.0:62023            # inside the container
+      WB_STRATUM_PUBLIC_PORT: ${STRATUM_PORT:-62023}  # shown to miners in the UI
     ports:
-      - "${STRATUM_PORT:-1776}:1776"           # Stratum for miners on your LAN
+      - "${STRATUM_PORT:-62023}:62023"         # Stratum for miners on your LAN
       - "${UI_PORT:-8420}:8420"                # web UI (The Mine / The Ledger)
       - "127.0.0.1:8080:8080"                  # stats JSON / Prometheus (local only)
     volumes:
@@ -57,10 +57,11 @@ services:
       WB_ZMQ_HASHBLOCK: tcp://${APP_BITCOIN_NODE_IP}:${APP_BITCOIN_ZMQ_HASHBLOCK_PORT:-28334}
       WB_PAYOUT_MODE: fixed
       WB_PAYOUT_ADDRESS: ${BTC_PAYOUT_ADDRESS:?set BTC_PAYOUT_ADDRESS}
-      WB_STRATUM_LISTEN: 0.0.0.0:3333
+      WB_STRATUM_LISTEN: 0.0.0.0:51492           # inside the container
+      WB_STRATUM_PUBLIC_PORT: ${BTC_STRATUM_PORT:-51492}
       WB_UI_LISTEN: "off"                      # BCH-only UI for now
     ports:
-      - "3334:3333"
+      - "${BTC_STRATUM_PORT:-51492}:51492"         # Stratum for miners on your LAN
       - "127.0.0.1:8081:8080"
     volumes:
       - btc-data:/data

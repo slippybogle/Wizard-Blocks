@@ -8,7 +8,7 @@ It runs:
   RPC and ZMQ are only reachable inside the compose network.
 - **engine**: Wizard-Blocks, built from this repository, connected to `bchn`.
   Stratum is on host port **3335**, the web UI on **8421**, and the stats API
-  on `127.0.0.1:8090`. These ports differ from the mainnet setup (1776 / 8420)
+  on `127.0.0.1:8090`. These ports differ from the mainnet setup (62023 / 8420)
   so both stacks can run side by side.
 
 Both images are available for amd64 and arm64 (x86 Umbrel Home and Raspberry Pi).

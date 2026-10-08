@@ -98,7 +98,7 @@ func Default() Config {
 			Mode: "fixed", CoinbaseTag: "/wizard-blocks/",
 		},
 		Stratum: Stratum{
-			Listen: "0.0.0.0:1776", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
+			Listen: "0.0.0.0:62023", Extranonce2Size: 8, VersionRollingMask: "1fffe000",
 			MaxConnections: 1024, MaxConnsPerIP: 64, AuthTimeoutS: 60, IdleTimeoutS: 600,
 			MaxLineBytes: 16384, MsgRatePerS: 100, MsgBurst: 500,
 		},

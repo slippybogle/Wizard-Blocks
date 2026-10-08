@@ -108,7 +108,7 @@ func TestStratumPorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Stratum.Listen != "0.0.0.0:1776" || c.StratumPort() != 1776 {
+	if c.Stratum.Listen != "0.0.0.0:62023" || c.StratumPort() != 62023 {
 		t.Fatalf("default stratum %s / %d", c.Stratum.Listen, c.StratumPort())
 	}
 	c, err = Load("", env(map[string]string{"WB_RPC_USER": "u", "WB_PAYOUT_ADDRESS": "x",

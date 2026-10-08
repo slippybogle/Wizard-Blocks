@@ -12,11 +12,12 @@ own ports. It runs:
 
 | stack | stratum | UI | stats |
 |---|---|---|---|
-| BCH mainnet (`deploy/docker-compose.umbrel.yml`) | 1776 | 8420 | 127.0.0.1:8080 |
+| BCH mainnet (`deploy/docker-compose.umbrel.yml`) | 62023 | 8420 | 127.0.0.1:8080 |
+| BTC mainnet (same file, `btc` profile) | 51492 | — | 127.0.0.1:8081 |
 | BCH testnet (`deploy/bch-testnet`) | 3335 | 8421 | 127.0.0.1:8090 |
 | **BTC testnet (this)** | **3336** | — | **127.0.0.1:8091** |
 
-All three can run side by side. Both images are available for amd64 and arm64
+All of them can run side by side. Both images are available for amd64 and arm64
 (x86 Umbrel Home and Raspberry Pi). Testnet coins have no value.
 
 ## 1. SSH into the Umbrel

@@ -14,7 +14,7 @@
     "coinbase_tag": "/wizard-blocks/"
   },
   "stratum": {
-    "listen": "0.0.0.0:1776",
+    "listen": "0.0.0.0:62023",
     "extranonce2_size": 8,
     "version_rolling_mask": "1fffe000"
   },

@@ -128,7 +128,7 @@ sequence=ffffffff | outputs | locktime=0
     "coinbase_tag": "/wizard-blocks/"
   },
   "stratum": {
-    "listen": "0.0.0.0:1776",
+    "listen": "0.0.0.0:62023",
     "public_port": 0,                    // port shown to miners if Docker maps another host port
     "extranonce2_size": 8,
     "version_rolling_mask": "1fffe000",

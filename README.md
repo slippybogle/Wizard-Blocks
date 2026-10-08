@@ -93,7 +93,7 @@ UI with two pages: **The Mine** and **The Ledger**.
    ```sh
    docker build -t wizard-blocks .
    docker run -d --name wizard-blocks-bch --restart unless-stopped --stop-timeout 90 \
-     -p 1776:1776 -p 8420:8420 -p 127.0.0.1:8080:8080 -v wb-bch:/data \
+     -p 62023:62023 -p 8420:8420 -p 127.0.0.1:8080:8080 -v wb-bch:/data \
      -e WB_COIN=bch \
      -e WB_RPC_URL=http://<node-ip>:8332 -e WB_RPC_USER=bchrpc -e WB_RPC_PASSWORD=change-me \
      -e WB_ZMQ_HASHBLOCK=tcp://<node-ip>:28332 \
@@ -106,8 +106,10 @@ UI with two pages: **The Mine** and **The Ledger**.
 3. Open the UI at `http://<host>:8420`.
 
 For Umbrel / compose, see [deploy/docker-compose.umbrel.yml](deploy/docker-compose.umbrel.yml).
-It maps host port `STRATUM_PORT` (default **1776**) to the engine's port 1776 and
-UI port `UI_PORT` (default 8420). The BTC engine sits behind the `btc` profile.
+It maps host port `STRATUM_PORT` (default **62023**) to the engine's port 62023 and
+UI port `UI_PORT` (default 8420). The BTC engine sits behind the `btc` profile
+(`docker compose --profile btc up -d`); its Stratum is on host port
+`BTC_STRATUM_PORT` (default **51492**).
 
 Without Docker: `go build ./cmd/wizard-blocks && ./wizard-blocks -config deploy/config.example.bch.json`.
 
@@ -115,7 +117,7 @@ Without Docker: `go build ./cmd/wizard-blocks && ./wizard-blocks -config deploy/
 
 | setting | value |
 |---|---|
-| URL | `stratum+tcp://<host>:1776` |
+| URL | `stratum+tcp://<host>:62023` (BCH) / `stratum+tcp://<host>:51492` (BTC) |
 | user | `fixed` mode: anything (e.g. `bitaxe1`). `miner` mode: your payout address, optionally `.<worker>` (e.g. `bitcoincash:qq…xyz.bitaxe1` or just `qq…xyz.bitaxe1`) |
 | password | `x`. `d=<difficulty>` pins this miner's difficulty, clamped to VARDIFF_MIN..VARDIFF_MAX |
 
@@ -168,7 +170,7 @@ example: [deploy/config.example.bch.json](deploy/config.example.bch.json).
 | `WB_PAYOUT_MODE` | `fixed` | `fixed` (one address) or `miner` (username = address) |
 | `WB_PAYOUT_ADDRESS` | — | required in `fixed` mode |
 | `WB_COINBASE_TAG` | `/wizard-blocks/` | ≤ 60 bytes |
-| `WB_STRATUM_LISTEN` | `0.0.0.0:1776` | Stratum listener |
+| `WB_STRATUM_LISTEN` | `0.0.0.0:62023` | Stratum listener |
 | `WB_STRATUM_PUBLIC_PORT` | listen port | port shown to miners in the UI, if Docker maps a different host port |
 | `WB_EXTRANONCE2_SIZE` | 8 | 2..8 |
 | `WB_VERSION_ROLLING_MASK` | `1fffe000` | subset of BIP320 bits |
