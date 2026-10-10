@@ -23,16 +23,27 @@ const (
 // (from the config/env at startup, or live from the UI).
 //
 // Precedence for a connection, highest first:
-//  1. Overrides[worker] (set in the UI), clamped to [Min, Max]
-//  2. the miner's password "d=<diff>", clamped to [Min, Max]
+//  1. an override for one of its workers: an exact name, else the longest
+//     matching prefix pattern ("rental.*"), clamped to [Min, Max]
+//  2. the miner's password "d=<diff>" (unless IgnorePasswordDiff), clamped
 //  3. FixedDiff, if > 0 (disables vardiff for everyone else)
-//  4. vardiff between Min and Max, aiming at one share per TargetSeconds
+//  4. vardiff between Min and Max, aiming at one share per TargetSeconds,
+//     starting from mining.suggest_difficulty (unless IgnoreSuggest) or
+//     else from Start
 type DiffSettings struct {
 	Min           float64            `json:"vardiff_min"`
 	Max           float64            `json:"vardiff_max"`
 	TargetSeconds float64            `json:"vardiff_target_seconds"`
 	FixedDiff     float64            `json:"fixed_diff"`
 	Overrides     map[string]float64 `json:"worker_overrides"`
+	// Start is the first difficulty of a new connection (vardiff starts
+	// here); 0 in a saved file means "the configured initial difficulty".
+	Start float64 `json:"start_diff"`
+	// IgnorePasswordDiff and IgnoreSuggest make the pool's own settings
+	// authoritative over a miner's "d=" password and its
+	// mining.suggest_difficulty (some rental services send unsuitable ones).
+	IgnorePasswordDiff bool `json:"ignore_password_diff"`
+	IgnoreSuggest      bool `json:"ignore_suggest_difficulty"`
 }
 
 func validDiff(v float64) bool {
@@ -61,12 +72,18 @@ func (d DiffSettings) Validate() error {
 			errs = append(errs, errors.New("FIXED_DIFF must be within VARDIFF_MIN..VARDIFF_MAX"))
 		}
 	}
+	if d.Start != 0 && !validDiff(d.Start) {
+		errs = append(errs, fmt.Errorf("start difficulty must be 0 (configured default) or between %g and %g", DiffFloor, DiffCeiling))
+	}
 	if len(d.Overrides) > maxOverrides {
 		errs = append(errs, fmt.Errorf("at most %d worker overrides", maxOverrides))
 	}
 	for w, v := range d.Overrides {
 		if strings.TrimSpace(w) == "" || len(w) > maxWorkerNameBytes {
 			errs = append(errs, errors.New("worker override names must be 1..256 bytes"))
+		}
+		if i := strings.IndexByte(w, '*'); i >= 0 && (i != len(w)-1 || i == 0) {
+			errs = append(errs, fmt.Errorf("override %q: '*' may only end a name prefix, as in rental.*", w))
 		}
 		if !validDiff(v) {
 			errs = append(errs, fmt.Errorf("override for %q must be between %g and %g", w, DiffFloor, DiffCeiling))
@@ -95,14 +112,34 @@ func (d DiffSettings) Clone() DiffSettings {
 }
 
 // OverrideFor returns the override for the first worker that has one
-// (workers in a stable order, primary first).
+// (workers in a stable order, primary first): an exact name first, else
+// the longest prefix pattern ("rental.*") that matches.
 func (d DiffSettings) OverrideFor(workers []string) (float64, bool) {
 	for _, w := range workers {
 		if v, ok := d.Overrides[w]; ok {
 			return d.Clamp(v), true
 		}
 	}
+	for _, w := range workers {
+		best, found := "", false
+		for k := range d.Overrides {
+			if p, ok := strings.CutSuffix(k, "*"); ok && strings.HasPrefix(w, p) && len(p) > len(best) {
+				best, found = p, true
+			}
+		}
+		if found {
+			return d.Clamp(d.Overrides[best+"*"]), true
+		}
+	}
 	return 0, false
+}
+
+// StartDiff returns the first difficulty for a new connection.
+func (d DiffSettings) StartDiff(configured float64) float64 {
+	if d.Start > 0 {
+		return d.Clamp(d.Start)
+	}
+	return d.Clamp(configured)
 }
 
 func sortedKeys(m map[string]bool, first string) []string {

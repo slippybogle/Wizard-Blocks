@@ -341,6 +341,33 @@ type State struct {
 	Mounts     []Mount     `json:"mounts"`
 	MountOffer *MountOffer `json:"mount_offer,omitempty"`
 	Stratum    StratumInfo `json:"stratum"`
+	// Chains is set when an aux chain is configured (LTC + DOGE): one entry
+	// per chain, the parent under its coin name.
+	Chains map[string]ChainView `json:"chains,omitempty"`
+	// AuxBlocks are the merged-mined aux blocks, newest first.
+	AuxBlocks []stats.BlockRecord `json:"aux_blocks,omitempty"`
+	// AuxCoins describes the aux chains (name, ticker, explorer).
+	AuxCoins map[string]CoinInfo `json:"aux_coins,omitempty"`
+}
+
+// ChainView is one chain's summary for a merged-mining page.
+type ChainView struct {
+	Merged         bool     `json:"merged"`
+	Reason         string   `json:"reason,omitempty"` // why an aux chain is not merged
+	Connected      bool     `json:"connected"`
+	Synced         bool     `json:"synced"`
+	ZMQ            bool     `json:"zmq_connected"`
+	Height         int64    `json:"height"`
+	NetworkDiff    float64  `json:"network_difficulty"`
+	PayoutAddress  string   `json:"payout_address,omitempty"`
+	BlocksFound    int      `json:"blocks_found"`
+	BlocksPending  int      `json:"blocks_pending"`
+	LastBlock      *int64   `json:"last_block_height,omitempty"`
+	EffortPct      *float64 `json:"effort_pct"`
+	ExpectedBlockS *float64 `json:"expected_block_s"`
+	OddsDay        float64  `json:"odds_day"`
+	OddsWeek       float64  `json:"odds_week"`
+	OddsYear       float64  `json:"odds_year"`
 }
 
 // Derived are values computed from the raw statistics.
@@ -444,6 +471,59 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 		st.Derived.LuckPct = &v
 	}
 	st.Derived.WorkersTotal = len(snap.Workers)
+
+	if len(snap.Aux) > 0 {
+		diff1 := pow.For(s.cfg.Coin).Diff1Hashes
+		chainOdds := func(v *ChainView) {
+			bh := v.NetworkDiff * diff1
+			if hr > 0 && bh > 0 {
+				e := bh / hr
+				v.ExpectedBlockS = &e
+			}
+			v.OddsDay, v.OddsWeek, v.OddsYear = odds(hr, bh, 86400), odds(hr, bh, 7*86400), odds(hr, bh, 365*86400)
+		}
+		parent := ChainView{Merged: true, Connected: snap.Node.Connected, Synced: snap.Node.Synced, ZMQ: snap.Node.ZMQConnected,
+			Height: snap.Node.Height, NetworkDiff: nd, PayoutAddress: st.Stratum.PayoutAddress,
+			BlocksFound: snap.Pool.BlocksFound, BlocksPending: snap.Pool.BlocksPending, EffortPct: st.Derived.LuckPct}
+		for _, b := range snap.Blocks {
+			if b.Status == "accepted" {
+				h := b.Height
+				parent.LastBlock = &h
+			}
+		}
+		chainOdds(&parent)
+		st.Chains = map[string]ChainView{s.cfg.Coin: parent}
+		for name, a := range snap.Aux {
+			v := ChainView{Merged: a.Merged, Reason: a.Reason, Connected: a.Connected, Synced: a.Connected && a.Reason != "node syncing",
+				ZMQ: a.ZMQ, Height: a.Height, NetworkDiff: a.NetworkDiff, PayoutAddress: a.Address}
+			if a.Luck.Shares > 0 {
+				e := a.Luck.Effort * 100
+				v.EffortPct = &e
+			}
+			for _, b := range snap.AuxBlocks {
+				if b.Chain != name {
+					continue
+				}
+				switch b.Status {
+				case "accepted":
+					v.BlocksFound++
+					h := b.Height
+					v.LastBlock = &h
+				case "pending":
+					v.BlocksPending++
+				}
+			}
+			chainOdds(&v)
+			st.Chains[name] = v
+			if st.AuxCoins == nil {
+				st.AuxCoins = map[string]CoinInfo{}
+			}
+			st.AuxCoins[name] = Coins[name]
+		}
+		for i := len(snap.AuxBlocks) - 1; i >= 0 && len(st.AuxBlocks) < maxBlocks; i-- {
+			st.AuxBlocks = append(st.AuxBlocks, snap.AuxBlocks[i])
+		}
+	}
 
 	// Blocks, newest first.
 	st.Blocks = []BlockView{}

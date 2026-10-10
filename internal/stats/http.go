@@ -100,6 +100,27 @@ func WritePrometheus(w io.Writer, s Snapshot) {
 	fmt.Fprintf(w, "wb_zmq_connected{coin=\"%s\"} %g\n", coin, b2f(s.Node.ZMQConnected))
 	g("wb_network_difficulty", "Network difficulty of the current template.", "gauge")
 	fmt.Fprintf(w, "wb_network_difficulty{coin=\"%s\"} %g\n", coin, s.Template.NetworkDiff)
+	auxNames := make([]string, 0, len(s.Aux))
+	for k := range s.Aux {
+		auxNames = append(auxNames, k)
+	}
+	sort.Strings(auxNames)
+	for _, k := range auxNames {
+		fmt.Fprintf(w, "wb_network_difficulty{coin=\"%s\"} %g\n", esc(k), s.Aux[k].NetworkDiff)
+	}
+	if len(auxNames) > 0 {
+		g("wb_merged", "1 while the aux chain is being merge-mined.", "gauge")
+		g("wb_effort_ratio", "Work since the chain's last found block, as a fraction of its network difficulty.", "gauge")
+		fmt.Fprintf(w, "wb_effort_ratio{coin=\"%s\"} %g\n", coin, s.Pool.Luck.Effort)
+		for _, k := range auxNames {
+			m := 0
+			if s.Aux[k].Merged {
+				m = 1
+			}
+			fmt.Fprintf(w, "wb_merged{coin=\"%s\"} %d\n", esc(k), m)
+			fmt.Fprintf(w, "wb_effort_ratio{coin=\"%s\"} %g\n", esc(k), s.Aux[k].Luck.Effort)
+		}
+	}
 	g("wb_template_height", "Height of the block being mined.", "gauge")
 	fmt.Fprintf(w, "wb_template_height{coin=\"%s\"} %d\n", coin, s.Template.Height)
 	g("wb_template_transactions", "Transactions in the current template (incl. coinbase).", "gauge")
@@ -139,6 +160,17 @@ func WritePrometheus(w io.Writer, s Snapshot) {
 	sort.Strings(statuses)
 	for _, k := range statuses {
 		fmt.Fprintf(w, "wb_blocks_total{coin=\"%s\",status=\"%s\"} %d\n", coin, esc(k), byStatus[k])
+	}
+	for _, chain := range auxNames {
+		aux := map[string]int{"accepted": 0, "rejected": 0, "orphaned": 0, "pending": 0}
+		for _, b := range s.AuxBlocks {
+			if b.Chain == chain {
+				aux[b.Status]++
+			}
+		}
+		for _, k := range []string{"accepted", "orphaned", "pending", "rejected"} {
+			fmt.Fprintf(w, "wb_blocks_total{coin=\"%s\",status=\"%s\"} %d\n", esc(chain), k, aux[k])
+		}
 	}
 	g("wb_worker_hashrate", "Estimated worker hashrate (H/s).", "gauge")
 	for _, wk := range s.Workers {

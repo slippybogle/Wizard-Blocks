@@ -163,6 +163,7 @@ type Collector struct {
 	bestWorker  string
 	blocks      []BlockRecord
 	auxBlocks   []BlockRecord // merged-mined aux chain blocks (Dogecoin)
+	aux         map[string]*AuxStatus
 	connections int
 	persistPath string
 	luck        Luck
@@ -202,12 +203,28 @@ func New(coin, version, dataDir string) *Collector {
 	return c
 }
 
+// AuxStatus is the state of a merged-mined aux chain (Dogecoin).
+type AuxStatus struct {
+	// Merged is true while its blocks are being mined; Reason says why not
+	// otherwise: "no address", "node down", "node syncing".
+	Merged      bool    `json:"merged"`
+	Reason      string  `json:"reason,omitempty"`
+	Connected   bool    `json:"connected"`
+	ZMQ         bool    `json:"zmq_connected"`
+	Height      int64   `json:"height"`
+	NetworkDiff float64 `json:"network_difficulty"` // share units
+	Address     string  `json:"payout_address,omitempty"`
+	// Luck since this chain's last found block (independent of the parent).
+	Luck Luck `json:"luck"`
+}
+
 type persisted struct {
-	Blocks     []BlockRecord `json:"blocks"`
-	AuxBlocks  []BlockRecord `json:"aux_blocks,omitempty"`
-	BestDiff   float64       `json:"best_share_difficulty"`
-	BestWorker string        `json:"best_share_worker"`
-	Luck       Luck          `json:"luck"`
+	Blocks     []BlockRecord   `json:"blocks"`
+	AuxBlocks  []BlockRecord   `json:"aux_blocks,omitempty"`
+	AuxLuck    map[string]Luck `json:"aux_luck,omitempty"`
+	BestDiff   float64         `json:"best_share_difficulty"`
+	BestWorker string          `json:"best_share_worker"`
+	Luck       Luck            `json:"luck"`
 }
 
 // Luck accumulates shares since the last block we found (confirmed on the
@@ -235,6 +252,9 @@ func (c *Collector) load() {
 	var p persisted
 	if json.Unmarshal(b, &p) == nil {
 		c.blocks, c.auxBlocks, c.bestDiff, c.bestWorker, c.luck = p.Blocks, p.AuxBlocks, p.BestDiff, p.BestWorker, p.Luck
+		for chain, l := range p.AuxLuck {
+			c.auxLocked(chain).Luck = l
+		}
 	}
 }
 
@@ -244,7 +264,7 @@ func (c *Collector) Save() error {
 		return nil
 	}
 	c.mu.Lock()
-	b, err := json.MarshalIndent(persisted{Blocks: c.blocks, AuxBlocks: c.auxBlocks, BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck}, "", "  ")
+	b, err := json.MarshalIndent(persisted{Blocks: c.blocks, AuxBlocks: c.auxBlocks, AuxLuck: c.auxLuckLocked(), BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck}, "", "  ")
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -340,6 +360,19 @@ func (c *Collector) ShareAcceptedOn(prevHash, worker string, shareDiff, achieved
 	c.luck.SumDiff += shareDiff
 	if achieved > c.luck.BestDiff {
 		c.luck.BestDiff = achieved
+	}
+	for _, a := range c.aux {
+		if a.Merged && a.NetworkDiff > 0 {
+			if a.Luck.Since.IsZero() {
+				a.Luck.Since = now
+			}
+			a.Luck.Shares++
+			a.Luck.SumDiff += shareDiff
+			a.Luck.Effort += shareDiff / a.NetworkDiff
+			if achieved > a.Luck.BestDiff {
+				a.Luck.BestDiff = achieved
+			}
+		}
 	}
 	r := c.roundFor(prevHash)
 	if r == nil {
@@ -480,17 +513,58 @@ func (c *Collector) Prune(maxIdle time.Duration) {
 	}
 }
 
+// auxLocked returns (creating) a chain's status. c.mu must be held.
+func (c *Collector) auxLocked(chain string) *AuxStatus {
+	if c.aux == nil {
+		c.aux = map[string]*AuxStatus{}
+	}
+	a := c.aux[chain]
+	if a == nil {
+		a = &AuxStatus{}
+		c.aux[chain] = a
+	}
+	return a
+}
+
+func (c *Collector) auxLuckLocked() map[string]Luck {
+	if len(c.aux) == 0 {
+		return nil
+	}
+	out := map[string]Luck{}
+	for k, a := range c.aux {
+		out[k] = a.Luck
+	}
+	return out
+}
+
+// SetAux updates an aux chain's status (its luck is kept).
+func (c *Collector) SetAux(chain string, f func(*AuxStatus)) {
+	c.mu.Lock()
+	a := c.auxLocked(chain)
+	luck := a.Luck
+	f(a)
+	a.Luck = luck
+	c.mu.Unlock()
+}
+
 // AuxBlockSubmitted records or updates (by chain and hash) a merged-mined
-// aux block. Aux blocks never touch the parent chain's luck or counts.
+// aux block. Aux blocks never touch the parent chain's luck or counts; a
+// newly accepted one resets that chain's own luck.
 func (c *Collector) AuxBlockSubmitted(r BlockRecord) {
 	c.mu.Lock()
 	found := false
 	for i := range c.auxBlocks {
 		if c.auxBlocks[i].Hash == r.Hash && c.auxBlocks[i].Chain == r.Chain {
+			if r.Status == "accepted" && c.auxBlocks[i].Status != "accepted" {
+				c.auxLocked(r.Chain).Luck = Luck{Since: time.Now()}
+			}
 			c.auxBlocks[i] = r
 			found = true
 			break
 		}
+	}
+	if !found && r.Status == "accepted" {
+		c.auxLocked(r.Chain).Luck = Luck{Since: time.Now()}
 	}
 	if !found {
 		c.auxBlocks = append(c.auxBlocks, r)
@@ -575,6 +649,8 @@ type Snapshot struct {
 	Blocks   []BlockRecord    `json:"blocks"`
 	// AuxBlocks are merged-mined aux chain blocks (Dogecoin), newest last.
 	AuxBlocks []BlockRecord `json:"aux_blocks,omitempty"`
+	// Aux is the status of each merged-mined aux chain, by name ("doge").
+	Aux map[string]AuxStatus `json:"aux,omitempty"`
 }
 
 // Snapshot returns a consistent copy of all statistics.
@@ -595,6 +671,12 @@ func (c *Collector) Snapshot() Snapshot {
 		},
 		Blocks:    append([]BlockRecord{}, c.blocks...),
 		AuxBlocks: append([]BlockRecord(nil), c.auxBlocks...),
+	}
+	if len(c.aux) > 0 {
+		s.Aux = map[string]AuxStatus{}
+		for k, a := range c.aux {
+			s.Aux[k] = *a
+		}
 	}
 	for _, b := range c.blocks {
 		switch b.Status {

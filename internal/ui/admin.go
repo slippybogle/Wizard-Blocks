@@ -38,6 +38,16 @@ type SettingsBackend interface {
 	SetPayout(ctx context.Context, addr string) (string, error)
 }
 
+// DogeBackend is implemented by an engine that can merge-mine Dogecoin.
+type DogeBackend interface {
+	// DogePayout returns the DOGE payout address ("" if none) and whether
+	// merged mining is available (a Dogecoin node is configured).
+	DogePayout() (addr string, available bool)
+	// SetDogePayout verifies a new address with the Dogecoin node ("" turns
+	// merged mining off), saves and applies it, and returns it.
+	SetDogePayout(ctx context.Context, addr string) (string, error)
+}
+
 const (
 	adminCookie   = "wb_admin"
 	sessionTTL    = 12 * time.Hour
@@ -388,6 +398,37 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 		}
 		s.log.Info("payout address changed from the UI", "ip", clientIP(r), "address", addr)
 		a.writeSettings(w, s)
+	})
+	mux.HandleFunc("/api/admin/doge-payout", func(w http.ResponseWriter, r *http.Request) {
+		if !a.authed(r) {
+			jsonErr(w, http.StatusUnauthorized, "login required")
+			return
+		}
+		if r.Method != http.MethodPut || !sameOrigin(r) {
+			jsonErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		db, ok := a.backend.(DogeBackend)
+		if !ok {
+			jsonErr(w, http.StatusNotFound, "Dogecoin merged mining is not available")
+			return
+		}
+		var body struct {
+			Address string `json:"address"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "bad request")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		addr, err := db.SetDogePayout(ctx, body.Address)
+		cancel()
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.log.Info("DOGE payout address changed from the UI", "ip", clientIP(r), "address", addr)
+		writeJSON(w, map[string]any{"doge_payout_address": addr})
 	})
 	mux.HandleFunc("/api/admin/settings/reset", func(w http.ResponseWriter, r *http.Request) {
 		if !a.authed(r) {

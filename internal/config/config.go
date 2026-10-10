@@ -115,6 +115,12 @@ type Config struct {
 	DataDir string  `json:"data_dir"`
 }
 
+// LTC vardiff defaults (Scrypt share units).
+const (
+	LTCStartDiff = 262144
+	LTCMinDiff   = 1024
+)
+
 // Default returns the default configuration.
 func Default() Config {
 	return Config{
@@ -152,6 +158,16 @@ func Load(path string, env func(string) string) (Config, error) {
 	}
 	if err := c.applyEnv(env); err != nil {
 		return c, err
+	}
+	// Scrypt share difficulty is 65536x easier per unit than SHA-256d, so
+	// the SHA-256d defaults would be far too low: when vardiff was left at
+	// its defaults, LTC starts at 262144 (the Elphapex DG Home 1's own
+	// default, ~8 s per share at 2.1 GH/s) with a floor of 1024.
+	if strings.EqualFold(c.Coin, "ltc") {
+		def := Default().Vardiff
+		if c.Vardiff.Initial == def.Initial && c.Vardiff.Min == def.Min {
+			c.Vardiff.Initial, c.Vardiff.Min = LTCStartDiff, LTCMinDiff
+		}
 	}
 	// An empty env value means "unset", so "off" is how env disables the UI.
 	if strings.EqualFold(c.UI.Listen, "off") {

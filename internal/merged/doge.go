@@ -46,6 +46,8 @@ type Doge struct {
 	log *slog.Logger
 
 	mu      sync.Mutex
+	addr    string // DOGE payout address ("" = merged mining off)
+	poke    chan struct{}
 	cur     *work.AuxBlock
 	prev    string // previousblockhash of cur
 	lastErr string
@@ -55,7 +57,8 @@ type Doge struct {
 
 // NewDoge creates the Dogecoin aux source.
 func NewDoge(cfg DogeConfig, rpc *node.Client, st *stats.Collector, log *slog.Logger) *Doge {
-	d := &Doge{cfg: cfg, rpc: rpc, st: st, log: log.With("chain", "doge"), changed: make(chan struct{}, 1)}
+	d := &Doge{cfg: cfg, rpc: rpc, st: st, log: log.With("chain", "doge"), changed: make(chan struct{}, 1),
+		addr: cfg.PayoutAddr, poke: make(chan struct{}, 1)}
 	if cfg.ZMQEndpoint != "" {
 		d.zmq = &node.ZMQSubscriber{Endpoint: cfg.ZMQEndpoint, Topics: []string{"hashblock"}, Log: d.log}
 	}
@@ -74,6 +77,28 @@ func (d *Doge) Current() []work.AuxBlock {
 
 // Changed implements work.AuxSource.
 func (d *Doge) Changed() <-chan struct{} { return d.changed }
+
+// PayoutAddress returns the DOGE payout address ("" when not set).
+func (d *Doge) PayoutAddress() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.addr
+}
+
+// SetPayoutAddress changes the DOGE payout address ("" turns merged mining
+// off). The caller has verified it. Work follows within moments.
+func (d *Doge) SetPayoutAddress(addr string) {
+	d.mu.Lock()
+	d.addr = addr
+	d.mu.Unlock()
+	select {
+	case d.poke <- struct{}{}:
+	default:
+	}
+}
+
+// RPC returns the Dogecoin node client.
+func (d *Doge) RPC() *node.Client { return d.rpc }
 
 // ZMQConnected reports the ZMQ session state (false without ZMQ).
 func (d *Doge) ZMQConnected() bool { return d.zmq != nil && d.zmq.Connected() }
@@ -142,11 +167,24 @@ func parseAuxBlock(r *auxBlockResult, payout string) (*work.AuxBlock, error) {
 
 // fetch asks the node for the current aux block and publishes changes.
 func (d *Doge) fetch(ctx context.Context, why string) {
+	addr := d.PayoutAddress()
+	if addr == "" {
+		d.mu.Lock()
+		lost := d.cur != nil
+		d.cur, d.prev, d.lastErr = nil, "", ""
+		d.mu.Unlock()
+		d.report(false, ReasonNoAddress, nil, d.nodeUp(ctx))
+		if lost {
+			d.log.Warn("no DOGE payout address: mining Litecoin only")
+			d.signal()
+		}
+		return
+	}
 	var r auxBlockResult
-	err := d.rpc.Call(ctx, "createauxblock", []any{d.cfg.PayoutAddr}, &r)
+	err := d.rpc.Call(ctx, "createauxblock", []any{addr}, &r)
 	var b *work.AuxBlock
 	if err == nil {
-		b, err = parseAuxBlock(&r, d.cfg.PayoutAddr)
+		b, err = parseAuxBlock(&r, addr)
 	}
 	d.mu.Lock()
 	if err != nil {
@@ -155,6 +193,16 @@ func (d *Doge) fetch(ctx context.Context, why string) {
 		first := d.lastErr != msg
 		d.cur, d.prev, d.lastErr = nil, "", msg
 		d.mu.Unlock()
+		reason, up := ReasonNodeDown, false
+		var rpcErr *node.RPCError
+		if errors.As(err, &rpcErr) {
+			up = true
+			reason = ReasonNodeError
+			if rpcErr.Code == -10 || rpcErr.Code == -9 { // in initial download / not connected
+				reason = ReasonNodeSyncing
+			}
+		}
+		d.report(false, reason, nil, up)
 		if lost || first {
 			d.log.Warn("Dogecoin aux work unavailable: mining Litecoin alone until it is back", "err", msg, "trigger", why)
 		}
@@ -167,6 +215,7 @@ func (d *Doge) fetch(ctx context.Context, why string) {
 	back := d.cur == nil
 	d.cur, d.prev, d.lastErr = b, r.PreviousBlock, ""
 	d.mu.Unlock()
+	d.report(true, "", b, true)
 	if same {
 		return
 	}
@@ -176,6 +225,33 @@ func (d *Doge) fetch(ctx context.Context, why string) {
 		d.log.Debug("Dogecoin aux block changed", "height", b.Height, "hash", b.Hash.String(), "trigger", why)
 	}
 	d.signal()
+}
+
+// Reasons why the aux chain is not being merged.
+const (
+	ReasonNoAddress   = "no address"
+	ReasonNodeDown    = "node down"
+	ReasonNodeSyncing = "node syncing"
+	ReasonNodeError   = "node error"
+)
+
+// nodeUp reports whether the node answers at all.
+func (d *Doge) nodeUp(ctx context.Context) bool {
+	_, err := d.rpc.GetBestBlockHash(ctx)
+	return err == nil
+}
+
+// report publishes the chain's status to the stats.
+func (d *Doge) report(merged bool, reason string, b *work.AuxBlock, connected bool) {
+	addr := d.PayoutAddress()
+	zmq := d.ZMQConnected()
+	d.st.SetAux("doge", func(a *stats.AuxStatus) {
+		a.Merged, a.Reason, a.Connected, a.ZMQ, a.Address = merged, reason, connected, zmq, addr
+		if b != nil {
+			a.Height = b.Height
+			a.NetworkDiff = pow.Scrypt.Difficulty(b.Target)
+		}
+	})
 }
 
 // Run keeps the aux block current until ctx ends: on each new Dogecoin
@@ -197,6 +273,8 @@ func (d *Doge) Run(ctx context.Context) {
 			return
 		case <-zmqCh:
 			d.fetch(ctx, "zmq")
+		case <-d.poke:
+			d.fetch(ctx, "address")
 		case <-poll.C:
 			best, err := d.rpc.GetBestBlockHash(ctx)
 			d.mu.Lock()

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
-<title>Wizard-Blocks-BTC</title>
+<title>Wizard-Blocks</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 <script src="app.js" defer></script>
@@ -13,9 +13,38 @@
 <canvas id="rain" aria-hidden="true"></canvas>
 <main>
   <header>
-    <h1>WIZARD-BLOCKS-BTC <span class="dim">// SOLO POOL</span></h1>
+    <h1><span id="title">WIZARD-BLOCKS</span> <span class="dim">// SOLO POOL</span></h1>
     <div id="status" class="dim">connecting…</div>
   </header>
+
+  <div id="banner" class="banner" role="status" hidden></div>
+
+  <div class="grid2" id="chains" hidden>
+    <section class="panel" id="chain-parent">
+      <h2 id="cp-title">LTC</h2>
+      <dl>
+        <dt>Status</dt><dd id="cp-status">—</dd>
+        <dt>Height</dt><dd id="cp-height">—</dd>
+        <dt>Network diff</dt><dd id="cp-diff">—</dd>
+        <dt>Effort</dt><dd id="cp-effort">—</dd>
+        <dt>Expected block</dt><dd id="cp-exp">—</dd>
+        <dt>Odds (day / week)</dt><dd id="cp-odds">—</dd>
+        <dt>Blocks found</dt><dd id="cp-blocks">—</dd>
+      </dl>
+    </section>
+    <section class="panel" id="chain-aux">
+      <h2 id="ca-title">DOGE (MERGED)</h2>
+      <dl>
+        <dt>Status</dt><dd id="ca-status">—</dd>
+        <dt>Height</dt><dd id="ca-height">—</dd>
+        <dt>Network diff</dt><dd id="ca-diff">—</dd>
+        <dt>Effort</dt><dd id="ca-effort">—</dd>
+        <dt>Expected block</dt><dd id="ca-exp">—</dd>
+        <dt>Odds (day / week)</dt><dd id="ca-odds">—</dd>
+        <dt>Blocks found</dt><dd id="ca-blocks">—</dd>
+      </dl>
+    </section>
+  </div>
 
   <div class="grid">
     <section class="panel" id="node">
@@ -53,15 +82,39 @@
         <div class="row"><input id="s-loginpw" type="password" autocomplete="current-password"><button id="s-loginbtn">Unlock</button></div>
       </div>
       <div id="s-body">
-        <label for="s-addr">Payout address (bc1… / 1… / 3…)</label>
-        <div class="row"><input id="s-addr" spellcheck="false" autocomplete="off" placeholder="bc1q…"><button id="s-save">Save</button></div>
+        <label for="s-addr" id="s-addr-label">Payout address</label>
+        <div class="row"><input id="s-addr" spellcheck="false" autocomplete="off" placeholder=""><button id="s-save">Save</button></div>
         <p class="dim small">100% of every block reward goes here. Checked by your node; miners get no work until it is set.</p>
+        <div id="s-doge-wrap" hidden>
+          <label for="s-doge">DOGE payout address (optional)</label>
+          <div class="row"><input id="s-doge" spellcheck="false" autocomplete="off" placeholder="D…"><button id="s-doge-save">Save</button></div>
+          <p class="dim small">Set it to also mine Dogecoin with the same hashrate. Checked by your Dogecoin node. Leave empty for Litecoin only.</p>
+        </div>
         <label for="s-pw">Settings password (optional)</label>
         <div class="row"><input id="s-pw" type="password" autocomplete="new-password" placeholder="8+ characters"><button id="s-setpw">Set</button><button id="s-rmpw" hidden>Remove</button></div>
       </div>
       <p id="s-msg" class="small" role="status"></p>
     </section>
   </div>
+
+  <section class="panel" id="diff" hidden>
+    <h2>DIFFICULTY</h2>
+    <div class="dgrid">
+      <label>Mode <select id="d-mode"><option value="vardiff">vardiff</option><option value="fixed">fixed</option></select></label>
+      <label>Start <input id="d-start" inputmode="decimal"></label>
+      <label>Min <input id="d-min" inputmode="decimal"></label>
+      <label>Max <input id="d-max" inputmode="decimal"></label>
+      <label>Seconds per share <input id="d-target" inputmode="decimal"></label>
+      <label>Fixed difficulty <input id="d-fixed" inputmode="decimal"></label>
+    </div>
+    <label for="d-over">Per-worker overrides, one per line: <code>name = difficulty</code> (a name ending in * matches every worker starting with it, e.g. <code>rental.* = 2000000</code>)</label>
+    <textarea id="d-over" rows="3" spellcheck="false"></textarea>
+    <label class="chk"><input type="checkbox" id="d-pw"> Honour a miner's <code>d=</code> password</label>
+    <label class="chk"><input type="checkbox" id="d-sg"> Honour <code>mining.suggest_difficulty</code></label>
+    <div class="row"><button id="d-save">Save difficulty</button><button id="d-reset">Reset to defaults</button></div>
+    <p class="dim small">Share time at the start difficulty: <input id="d-hr" class="short" inputmode="decimal" value="2.1"> GH/s → <span id="d-calc">—</span></p>
+    <p id="d-msg" class="small" role="status"></p>
+  </section>
 
   <section class="panel">
     <h2>WORKERS</h2>
@@ -74,7 +127,7 @@
   <section class="panel">
     <h2>BLOCKS FOUND</h2>
     <div class="scroll"><table>
-      <thead><tr><th class="num">Height</th><th>Hash</th><th>Worker</th><th>Time</th><th class="num">Conf.</th><th>Status</th></tr></thead>
+      <thead><tr><th class="chaincol" hidden>Chain</th><th class="num">Height</th><th>Hash</th><th>Worker</th><th>Time</th><th class="num">Conf.</th><th>Status</th></tr></thead>
       <tbody id="blocks"><tr><td colspan="6" class="dim">No blocks found yet.</td></tr></tbody>
     </table></div>
   </section>

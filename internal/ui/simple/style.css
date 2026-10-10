@@ -45,3 +45,14 @@ td { border-bottom: 1px solid rgba(0, 255, 65, 0.12); }
 .num { text-align: right; }
 a { color: var(--g); }
 #s-msg { min-height: 1.5em; margin: 8px 0 0; }
+.banner { border: 1px solid var(--amber, #ffb000); color: var(--amber, #ffb000); background: rgba(255, 176, 0, 0.08); padding: 10px 14px; margin: 14px 0 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+.dgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 12px; }
+.dgrid label input, .dgrid label select { width: 100%; box-sizing: border-box; margin-top: 4px; }
+select, textarea { background: #000; color: var(--g); border: 1px solid var(--dim); font: inherit; padding: 6px 8px; }
+textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+label.chk { display: flex; gap: 8px; align-items: center; color: var(--g); }
+input.short { width: 5em; flex: none; }
+code { color: var(--g); }
+#d-msg { min-height: 1.5em; margin: 8px 0 0; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .dgrid { grid-template-columns: 1fr 1fr; } }

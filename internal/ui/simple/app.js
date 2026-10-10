@@ -45,8 +45,63 @@ async function refresh() {
   }
 }
 
+function fmtSecs(v) {
+  if (!(v > 0)) return '—';
+  if (v < 120) return `${v.toFixed(v < 10 ? 1 : 0)} s`;
+  if (v < 7200) return `${(v / 60).toFixed(0)} min`;
+  if (v < 172800) return `${(v / 3600).toFixed(1)} h`;
+  if (v < 63072000) return `${(v / 86400).toFixed(1)} d`;
+  return `${(v / 31536000).toFixed(1)} y`;
+}
+const pct = (v) => (v == null ? '—' : v < 0.01 ? (v * 100).toExponential(1) + ' %' : (v * 100).toFixed(2) + ' %');
+
+// Banner shown while an aux chain (Dogecoin) is not being merge-mined.
+function bannerText(name, ticker, reason) {
+  switch (reason) {
+    case 'no address': return `Mining ${name} only. Add a ${ticker} payout address in Settings to also mine ${ticker === 'DOGE' ? 'Dogecoin' : ticker}.`;
+    case 'node down': return `Mining ${name} only: the ${ticker === 'DOGE' ? 'Dogecoin' : ticker} node is down. ${ticker === 'DOGE' ? 'Dogecoin' : ticker} mining resumes on its own.`;
+    case 'node syncing': return `Mining ${name} only: the ${ticker === 'DOGE' ? 'Dogecoin' : ticker} node is syncing. ${ticker === 'DOGE' ? 'Dogecoin' : ticker} mining resumes on its own.`;
+    default: return `Mining ${name} only: ${ticker} merged mining is unavailable (${reason || 'unknown'}).`;
+  }
+}
+
+function renderChain(prefix, title, v, isAux) {
+  set(prefix + '-status', isAux ? (v.merged ? 'merged' : 'not merged: ' + (v.reason || '—')) : (!v.connected ? 'no node connection' : v.synced ? 'synced' : 'syncing'), isAux ? !v.merged : !v.connected || !v.synced);
+  $(prefix === 'cp' ? 'cp-title' : 'ca-title').textContent = title;
+  set(prefix + '-height', v.height ? fmtInt(v.height) : '—');
+  set(prefix + '-diff', fmtDiff(v.network_difficulty));
+  set(prefix + '-effort', v.effort_pct == null ? '—' : v.effort_pct.toFixed(2) + ' %');
+  set(prefix + '-exp', fmtSecs(v.expected_block_s));
+  set(prefix + '-odds', `${pct(v.odds_day)} / ${pct(v.odds_week)}`);
+  set(prefix + '-blocks', `${fmtInt(v.blocks_found)}${v.blocks_pending ? ` (+${v.blocks_pending} pending)` : ''}`);
+}
+
+let lastState = null;
 function render(st) {
+  lastState = st;
   const n = st.node || {}, p = st.pool || {}, t = st.template || {}, d = st.derived || {};
+  const coin = st.coin || {}, ticker = coin.ticker || '';
+  $('title').textContent = 'WIZARD-BLOCKS' + (ticker ? '-' + ticker : '');
+  document.title = 'Wizard-Blocks' + (ticker ? '-' + ticker : '');
+  const hint = (coin.address_hint || {})[st.chain] || '';
+  $('s-addr').placeholder = hint;
+  $('s-addr-label').textContent = `${ticker || 'Payout'} payout address${hint ? ' (' + hint + ')' : ''}`;
+
+  const chains = st.chains || null;
+  const auxName = chains ? Object.keys(chains).find((k) => k !== coin.coin) : null;
+  $('chains').hidden = !auxName;
+  $('s-doge-wrap').hidden = !auxName;
+  document.querySelectorAll('.chaincol').forEach((el) => { el.hidden = !auxName; });
+  if (auxName) {
+    const aux = chains[auxName], auxCoin = (st.aux_coins || {})[auxName] || { ticker: auxName.toUpperCase() };
+    renderChain('cp', ticker, chains[coin.coin] || {}, false);
+    renderChain('ca', `${auxCoin.ticker} (MERGED)`, aux, true);
+    $('banner').hidden = !!aux.merged;
+    if (!aux.merged) $('banner').textContent = bannerText(coin.name || ticker, auxCoin.ticker, aux.reason);
+    if (document.activeElement !== $('s-doge') && !$('s-doge').dataset.dirty) $('s-doge').value = aux.payout_address || '';
+  } else {
+    $('banner').hidden = true;
+  }
   set('n-synced', !n.connected ? 'no node connection' : n.synced ? 'yes' : `syncing ${fmtInt(n.height)} / ${fmtInt(n.headers)}`, !n.connected || !n.synced);
   set('n-height', fmtInt(n.height));
   set('n-zmq', !n.zmq_enabled ? 'off (polling)' : n.zmq_connected ? 'connected' : 'not connected', n.zmq_enabled && !n.zmq_connected);
@@ -67,7 +122,7 @@ function render(st) {
 
   const sx = st.stratum || {};
   const host = location.hostname || 'umbrel.local';
-  $('s-stratum').textContent = `Stratum: stratum+tcp://${host}:${sx.port || 51492} · user: any name · password: x`;
+  $('s-stratum').textContent = `Stratum: stratum+tcp://${host}:${sx.port || '—'} · user: any name · password: x`;
   if (!sx.payout_set) set('s-msg', 'No payout address yet: set it below. Miners get no work until then.', true);
   else if ($('s-msg').textContent.startsWith('No payout')) set('s-msg', '');
   if (document.activeElement !== $('s-addr') && !$('s-addr').dataset.dirty) $('s-addr').value = sx.payout_address || '';
@@ -83,13 +138,26 @@ function render(st) {
 
   // Real blocks only (newest first): candidates that never made the chain
   // (stale, rejected) are left out.
-  const blocks = (st.blocks || []).filter((b) => b.chain_status !== 'stale' && b.status !== 'stale' && b.status !== 'rejected').slice(0, 50);
+  const real = (b) => b.chain_status !== 'stale' && b.status !== 'stale' && b.status !== 'rejected';
+  let blocks = (st.blocks || []).filter(real).map((b) => ({ ...b, chainTicker: ticker }));
+  if (auxName) {
+    const auxCoin = (st.aux_coins || {})[auxName] || {};
+    const tmpl = (auxCoin.explorer || {})[st.chain];
+    blocks = blocks.concat((st.aux_blocks || []).filter(real).map((b) => ({
+      ...b, chainTicker: auxCoin.ticker || auxName.toUpperCase(),
+      explorer_url: tmpl ? tmpl.replace('{hash}', b.hash) : '', confirmations: null, chain_status: b.status,
+    })));
+    blocks.sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
+  }
+  blocks = blocks.slice(0, 50);
+  const cols = auxName ? 7 : 6;
   $('blocks').innerHTML = blocks.length ? blocks.map((b) => {
     const hash = esc(b.hash || ''), short = hash.slice(0, 12) + '…' + hash.slice(-8);
     const link = b.explorer_url ? `<a href="${esc(b.explorer_url)}" target="_blank" rel="noopener noreferrer">${short}</a>` : short;
-    return `<tr><td class="num">${esc(fmtInt(b.height))}</td><td>${link}</td><td>${esc(b.worker)}</td>
-      <td>${esc(new Date(b.time).toLocaleString())}</td><td class="num">${esc(fmtInt(b.confirmations))}</td><td>${esc(b.chain_status || b.status)}</td></tr>`;
-  }).join('') : '<tr><td colspan="6" class="dim">No blocks found yet.</td></tr>';
+    return `<tr>${auxName ? `<td>${esc(b.chainTicker)}</td>` : ''}<td class="num">${esc(fmtInt(b.height))}</td><td>${link}</td><td>${esc(b.worker)}</td>
+      <td>${esc(new Date(b.time).toLocaleString())}</td><td class="num">${b.confirmations == null ? '—' : esc(fmtInt(b.confirmations))}</td><td>${esc(b.chain_status || b.status)}</td></tr>`;
+  }).join('') : `<tr><td colspan="${cols}" class="dim">No blocks found yet.</td></tr>`;
+  updateCalc();
 }
 
 // ---------- settings: payout address and optional password ----------
@@ -110,6 +178,8 @@ async function syncSession() {
     const locked = !s.enabled || (s.password_required && !s.authed);
     $('s-login').hidden = !(s.enabled && s.password_required && !s.authed);
     $('s-body').hidden = locked;
+    $('diff').hidden = locked;
+    if (!locked) loadDiff();
     $('s-rmpw').hidden = !s.password_set || s.env_password;
     $('s-setpw').textContent = s.password_set ? 'Change' : 'Set';
     if (!s.enabled) msg('Settings are disabled on this engine.', true);
@@ -135,6 +205,66 @@ $('s-setpw').addEventListener('click', async () => {
 $('s-rmpw').addEventListener('click', async () => {
   try { await api('api/admin/password', 'DELETE'); msg('Settings password removed.'); syncSession(); } catch (e) { msg(e.message, true); }
 });
+
+$('s-doge').addEventListener('input', () => { $('s-doge').dataset.dirty = '1'; });
+$('s-doge-save').addEventListener('click', async () => {
+  msg('Checking with your Dogecoin node…');
+  try {
+    const r = await api('api/admin/doge-payout', 'PUT', { address: $('s-doge').value.trim() });
+    delete $('s-doge').dataset.dirty;
+    msg(r.doge_payout_address ? 'DOGE payout saved: ' + r.doge_payout_address : 'DOGE payout cleared: mining Litecoin only.');
+    refresh();
+  } catch (e) { msg(e.message, true); }
+});
+
+// ---------- difficulty settings ----------
+function dmsg(text, bad = false) { set('d-msg', text, bad); }
+function fillDiff(d) {
+  $('d-mode').value = d.fixed_diff > 0 ? 'fixed' : 'vardiff';
+  $('d-start').value = d.start_diff || '';
+  $('d-min').value = d.vardiff_min;
+  $('d-max').value = d.vardiff_max;
+  $('d-target').value = d.vardiff_target_seconds;
+  $('d-fixed').value = d.fixed_diff || '';
+  $('d-over').value = Object.entries(d.worker_overrides || {}).map(([k, v]) => `${k} = ${v}`).join('\n');
+  $('d-pw').checked = !d.ignore_password_diff;
+  $('d-sg').checked = !d.ignore_suggest_difficulty;
+  updateCalc();
+}
+async function loadDiff() {
+  try { const r = await api('api/admin/settings', 'GET'); fillDiff(r.settings); } catch (e) { dmsg(e.message, true); }
+}
+function readDiff() {
+  const num = (id) => { const v = $(id).value.trim(); return v === '' ? 0 : Number(v); };
+  const over = {};
+  for (const line of $('d-over').value.split('\n')) {
+    if (!line.trim()) continue;
+    const i = line.lastIndexOf('=');
+    if (i < 1) throw new Error(`override line "${line.trim()}" must look like name = difficulty`);
+    over[line.slice(0, i).trim()] = Number(line.slice(i + 1).trim());
+  }
+  const fixed = $('d-mode').value === 'fixed' ? num('d-fixed') : 0;
+  if ($('d-mode').value === 'fixed' && !(fixed > 0)) throw new Error('fixed mode needs a fixed difficulty');
+  return {
+    vardiff_min: num('d-min'), vardiff_max: num('d-max'), vardiff_target_seconds: num('d-target'),
+    fixed_diff: fixed, worker_overrides: over, start_diff: num('d-start'),
+    ignore_password_diff: !$('d-pw').checked, ignore_suggest_difficulty: !$('d-sg').checked,
+  };
+}
+$('d-save').addEventListener('click', async () => {
+  try { const r = await api('api/admin/settings', 'PUT', readDiff()); fillDiff(r.settings); dmsg('Saved. Connected miners get the new difficulty now.'); } catch (e) { dmsg(e.message, true); }
+});
+$('d-reset').addEventListener('click', async () => {
+  try { await api('api/admin/settings/reset', 'POST'); await loadDiff(); dmsg('Back to the defaults.'); } catch (e) { dmsg(e.message, true); }
+});
+// Seconds per share at the start difficulty for a typed-in hashrate.
+function updateCalc() {
+  const start = Number($('d-start').value) || ((lastState && lastState.stratum && lastState.stratum.difficulty) || {}).start_diff || 0;
+  const gh = Number($('d-hr').value);
+  const diff1 = (lastState && lastState.coin && lastState.coin.coin === 'ltc') ? 65536 : 4294967296;
+  set('d-calc', start > 0 && gh > 0 ? `one share every ${fmtSecs(start * diff1 / (gh * 1e9))} at difficulty ${fmtDiff(start)}` : '—');
+}
+['d-start', 'd-hr'].forEach((id) => $(id).addEventListener('input', updateCalc));
 
 // ---------- binary rain: evenly spaced columns, alternating up/down ----------
 const rain = (() => {

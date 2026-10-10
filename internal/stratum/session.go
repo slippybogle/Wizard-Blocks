@@ -104,7 +104,7 @@ func newSession(s *Server, conn net.Conn, ip string, en1 uint32) *Session {
 		out: make(chan []byte, 64), done: make(chan struct{}),
 		tokens: s.cfg.MsgBurst, tokensAt: time.Now(),
 		workers: map[string]bool{}, jobs: map[string]sessJob{},
-		diff: s.diffs.Load().Clamp(s.cfg.Vardiff.Initial),
+		diff: s.diffs.Load().StartDiff(s.cfg.Vardiff.Initial),
 		vd:   newVardiff(s.cfg.Vardiff, time.Now()),
 	}
 }
@@ -398,7 +398,7 @@ func (c *Session) fixedLocked(ds *DiffSettings) (float64, bool) {
 	if v, ok := ds.OverrideFor(sortedKeys(c.workers, c.primary)); ok {
 		return v, true
 	}
-	if c.pwDiff > 0 {
+	if c.pwDiff > 0 && !ds.IgnorePasswordDiff {
 		return ds.Clamp(c.pwDiff), true
 	}
 	if ds.FixedDiff > 0 {
@@ -510,7 +510,7 @@ func (c *Session) handleSuggestDifficulty(req request) {
 	}
 	c.mu.Lock()
 	ds := c.srv.diffs.Load()
-	if _, fixed := c.fixedLocked(ds); !fixed {
+	if _, fixed := c.fixedLocked(ds); !fixed && !ds.IgnoreSuggest {
 		c.diff = ds.Clamp(ps[0]) // a suggestion: vardiff continues from here
 	}
 	started := c.started

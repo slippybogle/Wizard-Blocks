@@ -79,7 +79,7 @@ func NewServer(cfg Config, mgr *work.Manager, resolve PayoutResolver, st *stats.
 		en1Next: binary.BigEndian.Uint32(seed[:]),
 		dups:    map[uint64]map[bitcoin.Hash]struct{}{},
 	}
-	ds := DiffSettings{Min: cfg.Vardiff.Min, Max: cfg.Vardiff.Max, TargetSeconds: cfg.Vardiff.TargetShare.Seconds(),
+	ds := DiffSettings{Min: cfg.Vardiff.Min, Max: cfg.Vardiff.Max, TargetSeconds: cfg.Vardiff.TargetShare.Seconds(), Start: cfg.Vardiff.Initial,
 		FixedDiff: cfg.Vardiff.FixedDiff, Overrides: map[string]float64{}}
 	s.diffs.Store(&ds)
 	mgr.OnWork(s.broadcast)
@@ -101,7 +101,8 @@ func (s *Server) SetDiffSettings(d DiffSettings) error {
 		sess.reapplyDiff()
 	}
 	s.log.Info("difficulty settings applied", "min", d.Min, "max", d.Max, "target_s", d.TargetSeconds,
-		"fixed", d.FixedDiff, "overrides", len(d.Overrides))
+		"fixed", d.FixedDiff, "overrides", len(d.Overrides), "start", d.Start,
+		"ignore_password_diff", d.IgnorePasswordDiff, "ignore_suggest", d.IgnoreSuggest)
 	return nil
 }
 

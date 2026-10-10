@@ -171,3 +171,50 @@ func TestShareCreditedToItsOwnRound(t *testing.T) {
 		t.Fatalf("accepted %d", s.Pool.Accepted)
 	}
 }
+
+// An aux (DOGE) block resets only DOGE effort; an LTC block only LTC
+// effort. Both survive a restart; a state file without aux luck loads.
+func TestAuxEffortIsPerChain(t *testing.T) {
+	dir := t.TempDir()
+	c := New("ltc", "t", dir)
+	c.SetTemplate(func(ti *TemplateInfo) { ti.PrevHash = "a"; ti.Height = 10; ti.NetworkDiff = 1000 })
+	c.SetAux("doge", func(a *AuxStatus) { a.Merged = true; a.NetworkDiff = 100 })
+	c.ShareAccepted("w", 10, 20, "x")
+	s := c.Snapshot()
+	if s.Pool.Luck.Effort != 0.01 || s.Aux["doge"].Luck.Effort != 0.1 {
+		t.Fatalf("effort ltc %v doge %v", s.Pool.Luck.Effort, s.Aux["doge"].Luck.Effort)
+	}
+	c.AuxBlockSubmitted(BlockRecord{Chain: "doge", Hash: "d1", Status: "pending"})
+	c.AuxBlockSubmitted(BlockRecord{Chain: "doge", Hash: "d1", Status: "accepted"})
+	s = c.Snapshot()
+	if s.Aux["doge"].Luck.Effort != 0 || s.Pool.Luck.Effort != 0.01 {
+		t.Fatalf("DOGE block reset: ltc %v doge %v", s.Pool.Luck.Effort, s.Aux["doge"].Luck.Effort)
+	}
+	c.ShareAccepted("w", 10, 20, "x")
+	c.BlockSubmitted(BlockRecord{Hash: "l1", Status: "accepted"})
+	s = c.Snapshot()
+	if s.Pool.Luck.Effort != 0 || s.Aux["doge"].Luck.Effort != 0.1 {
+		t.Fatalf("LTC block reset: ltc %v doge %v", s.Pool.Luck.Effort, s.Aux["doge"].Luck.Effort)
+	}
+	// Not merged: no DOGE effort accrues.
+	c.SetAux("doge", func(a *AuxStatus) { a.Merged = false; a.Reason = "node down" })
+	c.ShareAccepted("w", 10, 20, "x")
+	if e := c.Snapshot().Aux["doge"].Luck.Effort; e != 0.1 {
+		t.Fatalf("effort accrued while not merged: %v", e)
+	}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	c2 := New("ltc", "t", dir)
+	if e := c2.Snapshot().Aux["doge"].Luck.Effort; e != 0.1 || len(c2.AuxBlocks()) != 1 {
+		t.Fatalf("after restart: doge effort %v, aux blocks %d", e, len(c2.AuxBlocks()))
+	}
+	// Metrics carry the DOGE series beside the LTC ones.
+	var b bytes.Buffer
+	WritePrometheus(&b, c2.Snapshot())
+	for _, want := range []string{`wb_blocks_total{coin="doge",status="accepted"} 1`, `wb_merged{coin="doge"} 0`, `wb_effort_ratio{coin="doge"} 0.1`} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("metrics missing %q", want)
+		}
+	}
+}

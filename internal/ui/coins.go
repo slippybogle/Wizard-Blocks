@@ -40,6 +40,20 @@ var Coins = map[string]CoinInfo{
 			"signet":   "https://mempool.space/signet/block/{hash}",
 		},
 	},
+	"ltc": {
+		Coin: "ltc", Name: "Litecoin", Ticker: "LTC", BlockTimeS: 150, Maturity: 100,
+		AddressHint: map[string]string{"main": "ltc1q…", "test": "tltc1q…", "regtest": "rltc1q…"},
+		Explorer: map[string]string{
+			"main": "https://litecoinspace.org/block/{hash}",
+			"test": "https://litecoinspace.org/testnet/block/{hash}",
+		},
+	},
+	// Dogecoin is only ever merge-mined (an aux chain), never the engine coin.
+	"doge": {
+		Coin: "doge", Name: "Dogecoin", Ticker: "DOGE", BlockTimeS: 60, Maturity: 240,
+		AddressHint: map[string]string{"main": "D…", "test": "n…", "regtest": "m…"},
+		Explorer:    map[string]string{"main": "https://blockchair.com/dogecoin/block/{hash}"},
+	},
 }
 
 // Creature rarity from a job's best share difficulty as a percentage of the
