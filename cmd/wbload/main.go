@@ -36,6 +36,7 @@ func main() {
 	flag.StringVar(&cfg.NameFmt, "names", "rentx.rig%05d", "worker name format (one %d)")
 	flag.Float64Var(&cfg.PwDiff, "d", 0, "MRR: send x,d=<n> as the password")
 	flag.Float64Var(&cfg.Suggest, "suggest", 0, "MRR: send mining.suggest_difficulty <n>")
+	flag.BoolVar(&cfg.SameName, "same-name", false, "every connection uses the same worker name (MRR rigs under one pool profile)")
 	flag.Float64Var(&cfg.ShareRate, "rate", 0, "shares per second per connection (0 = idle)")
 	flag.DurationVar(&cfg.Duration, "duration", 30*time.Second, "submit phase length")
 	flag.DurationVar(&cfg.Timeout, "timeout", 10*time.Second, "per request timeout")

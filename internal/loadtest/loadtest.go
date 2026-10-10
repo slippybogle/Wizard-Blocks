@@ -31,12 +31,17 @@ import (
 type Profile string
 
 const (
-	// NiceHash: mining.configure (version rolling), subscribe as
-	// "NiceHash/1.0.0", extranonce.subscribe, authorize.
+	// NiceHash: mining.configure (version rolling, SHA256AsicBoost only),
+	// subscribe as "NiceHash/1.0.0", mining.extranonce.subscribe (NiceHash
+	// spec), authorize "x"; shares carry rolled version bits. NiceHash's
+	// published pool requirements: extranonce2 size >= 4 and pool
+	// difficulty >= 8 (SHA256AsicBoost, Scrypt).
 	NiceHash Profile = "nicehash"
-	// MRR (MiningRigRentals with #xnsub): subscribe as "MRR/1.0", authorize
-	// with "x,d=<n>" in the password when PwDiff is set,
-	// extranonce.subscribe, suggest_difficulty when Suggest is set.
+	// MRR (MiningRigRentals, pool URL with #xnsub): subscribe,
+	// mining.extranonce.subscribe, authorize with "x" or "x,d=<n>" (PwDiff);
+	// suggest_difficulty when Suggest is set. Rigs rented under one pool
+	// profile share one username: with SameName every connection
+	// authorizes the same worker.
 	MRR Profile = "mrr"
 	// Mixed alternates NiceHash and MRR connections.
 	Mixed Profile = "mixed"
@@ -53,6 +58,7 @@ type Config struct {
 	NameFmt   string // worker name format with one %d, e.g. "rentx.rig%05d"
 	PwDiff    float64
 	Suggest   float64
+	SameName  bool // every connection authorizes the same worker (MRR pool profile)
 	// ShareRate is shares per second per connection (0 = idle connections).
 	ShareRate float64
 	Duration  time.Duration // how long to submit after all connections are up
@@ -71,6 +77,8 @@ type Result struct {
 	Elapsed                    time.Duration
 	Difficulties               map[string]int // difficulty at the end of the run, per connection
 	FailReasons                map[string]int
+	MinExtranonce2Size         int    // smallest extranonce2 size the pool gave (NiceHash needs >= 4)
+	VersionRolled              uint64 // accepted shares that carried rolled version bits
 }
 
 // AcceptedPerSec is accepted shares per second over the submit phase.
@@ -86,9 +94,9 @@ func (r *Result) String() string {
 	for _, n := range r.Rejected {
 		rej += n
 	}
-	return fmt.Sprintf("opened=%d refused=%d failed=%d handshake p50=%v p99=%v | submitted=%d accepted=%d (%.0f/s) rejected=%d %v | submit p50=%v p99=%v max=%v | disconnected=%d diffs=%v fails=%v",
-		r.Opened, r.Refused, r.Failed, r.HandshakeP50.Round(time.Microsecond), r.HandshakeP99.Round(time.Microsecond),
-		r.Submitted, r.Accepted, r.AcceptedPerSec(), rej, r.Rejected,
+	return fmt.Sprintf("opened=%d refused=%d failed=%d handshake p50=%v p99=%v en2=%d | submitted=%d accepted=%d (%.0f/s, %d version-rolled) rejected=%d %v | submit p50=%v p99=%v max=%v | disconnected=%d diffs=%v fails=%v",
+		r.Opened, r.Refused, r.Failed, r.HandshakeP50.Round(time.Microsecond), r.HandshakeP99.Round(time.Microsecond), r.MinExtranonce2Size,
+		r.Submitted, r.Accepted, r.AcceptedPerSec(), r.VersionRolled, rej, r.Rejected,
 		r.SubmitP50.Round(time.Microsecond), r.SubmitP99.Round(time.Microsecond), r.SubmitMax.Round(time.Microsecond),
 		r.Disconnected, r.Difficulties, r.FailReasons)
 }
@@ -138,6 +146,7 @@ type conn struct {
 	en1     []byte
 	en2Size int
 	diff    float64
+	mask    uint32 // negotiated version-rolling mask (NiceHash on SHA-256d)
 	job     *job
 	gotJob  chan struct{}
 	jobOnce sync.Once
@@ -213,6 +222,18 @@ func (c *conn) notify(method string, p []json.RawMessage) {
 			c.mu.Lock()
 			c.diff = d
 			c.mu.Unlock()
+		}
+	case "mining.set_extranonce":
+		// NiceHash extension: new extranonce1 / extranonce2 size, used from
+		// the next job on (this pool never sends it; handled for fidelity).
+		var en1 string
+		var size int
+		if len(p) >= 2 && json.Unmarshal(p[0], &en1) == nil && json.Unmarshal(p[1], &size) == nil {
+			if b, err := hex.DecodeString(en1); err == nil {
+				c.mu.Lock()
+				c.en1, c.en2Size = b, size
+				c.mu.Unlock()
+			}
 		}
 	case "mining.notify":
 		j, err := parseNotify(p)
@@ -314,10 +335,21 @@ func (c *conn) call(ctx context.Context, timeout time.Duration, method string, p
 func (c *conn) handshake(ctx context.Context, cfg *Config, p Profile, worker string) error {
 	to := cfg.Timeout
 	pass := "x"
-	if p == NiceHash {
-		if _, err := c.call(ctx, to, "mining.configure", []string{"version-rolling"},
-			map[string]any{"version-rolling.mask": "1fffe000", "version-rolling.min-bit-count": 2}); err != nil {
+	if p == NiceHash && !cfg.Scrypt {
+		r, err := c.call(ctx, to, "mining.configure", []string{"version-rolling"},
+			map[string]any{"version-rolling.mask": "1fffe000", "version-rolling.min-bit-count": 2})
+		if err != nil {
 			return err
+		}
+		var res map[string]any
+		if json.Unmarshal(r.Result, &res) == nil && res["version-rolling"] == true {
+			if ms, ok := res["version-rolling.mask"].(string); ok {
+				if m, err := strconv.ParseUint(ms, 16, 32); err == nil {
+					c.mu.Lock()
+					c.mask = uint32(m)
+					c.mu.Unlock()
+				}
+			}
 		}
 	}
 	agent := "NiceHash/1.0.0"
@@ -384,7 +416,7 @@ func sha256d(b []byte) [32]byte {
 	return sha256.Sum256(h[:])
 }
 
-func header(j *job, en1, en2 []byte, nonce uint32) [80]byte {
+func header(j *job, en1, en2 []byte, version, nonce uint32) [80]byte {
 	cb := make([]byte, 0, len(j.coinb1)+len(en1)+len(en2)+len(j.coinb2))
 	cb = append(append(append(append(cb, j.coinb1...), en1...), en2...), j.coinb2...)
 	root := sha256d(cb)
@@ -392,7 +424,7 @@ func header(j *job, en1, en2 []byte, nonce uint32) [80]byte {
 		root = sha256d(append(root[:], b...))
 	}
 	var h [80]byte
-	binary.LittleEndian.PutUint32(h[0:], j.version)
+	binary.LittleEndian.PutUint32(h[0:], version)
 	copy(h[4:36], j.prevHash)
 	copy(h[36:68], root[:])
 	binary.LittleEndian.PutUint32(h[68:], j.ntime)
@@ -443,24 +475,31 @@ func compactTarget(bits uint32) *big.Int {
 // share finds a nonce meeting the share target but missing the network
 // target (so no block is found). It gives up after a few thousand tries
 // (the test difficulty is expected to be tiny).
-func (c *conn) share(en2ctr uint64, scrypt bool) (*job, []byte, uint32, bool) {
+// With a version-rolling mask (NiceHash on SHA-256d) the header carries
+// random rolled bits and the submit reports them (BIP310: version & mask).
+func (c *conn) share(en2ctr uint64, scrypt bool) (*job, []byte, uint32, string, bool) {
 	c.mu.Lock()
-	j, en1, size, d := c.job, c.en1, c.en2Size, c.diff
+	j, en1, size, d, mask := c.job, c.en1, c.en2Size, c.diff, c.mask
 	c.mu.Unlock()
 	if j == nil || d <= 0 {
-		return nil, nil, 0, false
+		return nil, nil, 0, "", false
+	}
+	version, vhex := j.version, ""
+	if mask != 0 {
+		version = j.version&^mask | rand.Uint32()&mask
+		vhex = fmt.Sprintf("%08x", version&mask)
 	}
 	en2 := make([]byte, size)
 	binary.BigEndian.PutUint64(en2[size-8:], en2ctr)
 	st, nt := shareTarget(d, scrypt), compactTarget(j.bits)
 	start := rand.Uint32()
 	for i := uint32(0); i < 4096; i++ {
-		v := powValue(header(j, en1, en2, start+i), scrypt)
+		v := powValue(header(j, en1, en2, version, start+i), scrypt)
 		if v.Cmp(st) <= 0 && v.Cmp(nt) > 0 {
-			return j, en2, start + i, true
+			return j, en2, start + i, vhex, true
 		}
 	}
-	return nil, nil, 0, false
+	return nil, nil, 0, "", false
 }
 
 type stats struct {
@@ -470,6 +509,7 @@ type stats struct {
 	rejected  map[string]uint64
 	fails     map[string]int
 	diffs     map[string]int
+	rolled    uint64
 	submitted atomic.Uint64
 	accepted  atomic.Uint64
 }
@@ -535,7 +575,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 				st.fail(err)
 				return
 			}
-			if err := c.handshake(ctx, &cfg, p, fmt.Sprintf(cfg.NameFmt, i)); err != nil {
+			if err := c.handshake(ctx, &cfg, p, workerName(&cfg, i)); err != nil {
 				// The server closes over-limit connections at once, before
 				// answering anything.
 				over := false
@@ -582,43 +622,70 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			wg.Add(1)
 			go func(i int, c *conn) {
 				defer wg.Done()
-				worker := fmt.Sprintf(cfg.NameFmt, i)
+				worker := workerName(&cfg, i)
 				ctr := uint64(i) << 32
-				// Random phase, then Poisson arrivals at ShareRate.
-				next := time.Duration(rand.Float64() * float64(time.Second) / cfg.ShareRate)
+				// Poisson arrivals at ShareRate on an absolute schedule, each
+				// submit in its own goroutine (pipelined, as a big miner on one
+				// connection sends them), at most 512 in flight.
+				inflight := make(chan struct{}, 512)
+				var sw sync.WaitGroup
+				defer sw.Wait()
+				due := time.Now().Add(time.Duration(rand.Float64() * float64(time.Second) / cfg.ShareRate))
 				for {
-					select {
-					case <-sctx.Done():
+					if wait := time.Until(due); wait > 0 {
+						select {
+						case <-sctx.Done():
+							return
+						case <-c.closed:
+							return
+						case <-time.After(wait):
+						}
+					} else if sctx.Err() != nil {
 						return
-					case <-c.closed:
-						return
-					case <-time.After(next):
+					} else {
+						select {
+						case <-c.closed:
+							return
+						default:
+						}
 					}
-					next = time.Duration(rand.ExpFloat64() * float64(time.Second) / cfg.ShareRate)
+					due = due.Add(time.Duration(rand.ExpFloat64() * float64(time.Second) / cfg.ShareRate))
 					ctr++
-					j, en2, nonce, ok := c.share(ctr, cfg.Scrypt)
+					j, en2, nonce, vhex, ok := c.share(ctr, cfg.Scrypt)
 					if !ok {
 						continue
 					}
-					ts := time.Now()
-					r, err := c.call(ctx, cfg.Timeout, "mining.submit", worker, j.id, hex.EncodeToString(en2),
-						fmt.Sprintf("%08x", j.ntime), fmt.Sprintf("%08x", nonce))
-					d := time.Since(ts)
-					st.submitted.Add(1)
-					if err != nil {
-						if sctx.Err() == nil {
-							st.fail(err)
+					params := []any{worker, j.id, hex.EncodeToString(en2), fmt.Sprintf("%08x", j.ntime), fmt.Sprintf("%08x", nonce)}
+					if vhex != "" {
+						params = append(params, vhex)
+					}
+					inflight <- struct{}{}
+					sw.Add(1)
+					go func() {
+						defer sw.Done()
+						defer func() { <-inflight }()
+						ts := time.Now()
+						r, err := c.call(ctx, cfg.Timeout, "mining.submit", params...)
+						d := time.Since(ts)
+						st.submitted.Add(1)
+						if err != nil {
+							if sctx.Err() == nil {
+								st.fail(err)
+							}
+							return
 						}
-						continue
-					}
-					st.mu.Lock()
-					st.sub = append(st.sub, d)
-					if r.ok() {
-						st.accepted.Add(1)
-					} else {
-						st.rejected[r.errText()]++
-					}
-					st.mu.Unlock()
+						st.mu.Lock()
+						st.sub = append(st.sub, d)
+						if r.ok() {
+							st.accepted.Add(1)
+							if vhex != "" {
+								st.rolled++
+							}
+						} else {
+							st.rejected[r.errText()]++
+						}
+						st.mu.Unlock()
+					}()
 				}
 			}(i, c)
 		}
@@ -646,8 +713,25 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	res.SubmitP50, res.SubmitP99, res.SubmitMax = pct(st.sub, 0.5), pct(st.sub, 0.99), pct(st.sub, 1)
 	res.Submitted, res.Accepted = st.submitted.Load(), st.accepted.Load()
 	res.Rejected, res.FailReasons, res.Difficulties = st.rejected, st.fails, st.diffs
+	res.VersionRolled = st.rolled
+	for _, c := range live {
+		c.mu.Lock()
+		if res.MinExtranonce2Size == 0 || c.en2Size < res.MinExtranonce2Size {
+			res.MinExtranonce2Size = c.en2Size
+		}
+		c.mu.Unlock()
+	}
 	for _, n := range st.fails {
 		res.Failed += n
 	}
 	return res, nil
+}
+
+// workerName is connection i's worker: rental rig names, or one shared name
+// (MRR rigs rented under one pool profile).
+func workerName(cfg *Config, i int) string {
+	if cfg.SameName {
+		return fmt.Sprintf(cfg.NameFmt, 0)
+	}
+	return fmt.Sprintf(cfg.NameFmt, i)
 }

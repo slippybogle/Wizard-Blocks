@@ -271,6 +271,39 @@ func loadCoin(t *testing.T, coin string) {
 	if lr.Res.Accepted == 0 || len(lr.Res.Rejected) > 0 || lr.Res.Failed > 0 {
 		t.Errorf("shares: accepted %d rejected %v failed %v", lr.Res.Accepted, lr.Res.Rejected, lr.Res.FailReasons)
 	}
+	// NiceHash's published requirement: extranonce2 size >= 4. Its rigs
+	// roll version bits on SHA256AsicBoost.
+	if lr.Res.MinExtranonce2Size < 4 {
+		t.Errorf("extranonce2 size %d, NiceHash needs >= 4", lr.Res.MinExtranonce2Size)
+	}
+	if !scrypt && lr.Res.VersionRolled == 0 {
+		t.Errorf("no version-rolled NiceHash shares accepted")
+	}
+	// MRR: rigs rented under one pool profile share one worker name.
+	set(func(d *stratum.DiffSettings) { d.Overrides = map[string]float64{"rentx.*": nd * 0.1} })
+	lr = runWbload(t, append(common, "-conns", "50", "-profile", "mrr", "-same-name", "-names", "rentx.mrr%d", "-rate", "1", "-duration", "5s")...)
+	logRun("mrr 50 rigs, one name", lr)
+	if lr.Res.Opened != 50 || lr.Res.Accepted == 0 || len(lr.Res.Rejected) > 0 {
+		t.Errorf("mrr same name: opened %d accepted %d rejected %v", lr.Res.Opened, lr.Res.Accepted, lr.Res.Rejected)
+	}
+	for _, w := range en.E.Stats().Snapshot().Workers {
+		if w.Name == "rentx.mrr0" && w.Accepted < lr.Res.Accepted {
+			t.Errorf("mrr same name: worker credited %d of %d shares", w.Accepted, lr.Res.Accepted)
+		}
+	}
+
+	// One connection carrying a whole rental: the share rate it sends at the
+	// start difficulty (65536 BCH/BTC, 262144 LTC) before vardiff's first
+	// step, held for 20 s (regtest caps difficulty at the network's, so
+	// vardiff cannot slow it here). With the shipped message limit (100/s,
+	// burst 500) it must not be disconnected.
+	rate := map[string]float64{"bch": 50e15 / (65536 * 4294967296), "btc": 1e18 / (65536 * 4294967296), "ltc": 50e12 / (262144 * 65536)}[coin]
+	label := map[string]string{"bch": "50 PH/s", "btc": "1 EH/s", "ltc": "50 TH/s"}[coin]
+	lr = runWbload(t, append(common, "-conns", "1", "-profile", "nicehash", "-rate", fmt.Sprintf("%.1f", rate), "-duration", "20s", "-timeout", "30s")...)
+	logRun(fmt.Sprintf("1 conn %s (%.0f/s)", label, rate), lr)
+	if lr.Res.Disconnected > 0 || lr.Res.Opened != 1 || float64(lr.Res.Accepted) < 0.9*rate*20 {
+		t.Errorf("one-connection %s: disconnected %d accepted %d of ~%.0f %v", label, lr.Res.Disconnected, lr.Res.Accepted, rate*20, lr.Res.FailReasons)
+	}
 	if os.Getenv("WB_LOAD_SMOKE") != "" {
 		return // protocol checks only
 	}
