@@ -32,6 +32,12 @@ var staticFS embed.FS
 //go:embed simple
 var simpleFS embed.FS
 
+// statsFS is the plain stats page (WB_UI_STYLE=stats, the LTC app's
+// default): pool hashrates and best share, and each miner's live hashrate.
+//
+//go:embed stats
+var statsFS embed.FS
+
 // Config is what the UI needs to know about the engine's configuration.
 type Config struct {
 	Coin            string
@@ -44,7 +50,7 @@ type Config struct {
 	DataDir         string
 	AdminPassword   string
 	SettingsOpen    bool
-	Style           string // "simple": the one-page stats UI (simple/), else the Mine/Ledger (static/)
+	Style           string // "simple": the one-page stats UI (simple/); "stats": the plain stats page (stats/); else the Mine/Ledger (static/)
 }
 
 // Server is the web UI server.
@@ -122,8 +128,11 @@ func (s *Server) Listen(addr string) error {
 	}
 	s.ln = ln
 	sub, _ := fs.Sub(staticFS, "static")
-	if s.cfg.Style == "simple" {
+	switch s.cfg.Style {
+	case "simple":
 		sub, _ = fs.Sub(simpleFS, "simple")
+	case "stats":
+		sub, _ = fs.Sub(statsFS, "stats")
 	}
 	files := http.FileServer(http.FS(sub))
 	mux := http.NewServeMux()

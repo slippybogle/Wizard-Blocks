@@ -1,0 +1,6 @@
+html, body { margin: 0; background: #000; color: #ddd; }
+pre {
+  margin: 0; padding: 16px;
+  font: 14px/1.5 ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}

@@ -176,6 +176,9 @@ func TestLTCVardiffDefaults(t *testing.T) {
 	if c.Vardiff.Initial != 262144 || c.Vardiff.Min != 1024 {
 		t.Fatalf("LTC defaults: initial %v min %v", c.Vardiff.Initial, c.Vardiff.Min)
 	}
+	if c.UI.Style != "stats" {
+		t.Fatalf("LTC default page: %q, want stats", c.UI.Style)
+	}
 	// An explicit choice is kept (the user's usual 200000).
 	env["WB_VARDIFF_INITIAL"] = "200000"
 	c, _ = Load("", func(k string) string { return env[k] })
@@ -187,5 +190,8 @@ func TestLTCVardiffDefaults(t *testing.T) {
 	c, _ = Load("", func(k string) string { return env[k] })
 	if c.Vardiff.Initial != 65536 || c.Vardiff.Min != 1 {
 		t.Fatalf("BTC defaults changed: %v %v", c.Vardiff.Initial, c.Vardiff.Min)
+	}
+	if c.UI.Style != "" {
+		t.Fatalf("BTC page changed: %q", c.UI.Style)
 	}
 }

@@ -90,8 +90,9 @@ type UI struct {
 	// sits behind an authenticating reverse proxy (e.g. Umbrel's app_proxy).
 	// A password can still be set from the Settings page.
 	SettingsOpen bool `json:"settings_open"`
-	// Style picks the page: "mine" (the pixel-art Mine and Ledger, default)
-	// or "simple" (one plain stats page, used by the BTC Umbrel app).
+	// Style picks the page: "mine" (the pixel-art Mine and Ledger, default),
+	// "simple" (one stats page, used by the BTC Umbrel app) or "stats" (plain
+	// text pool and miner hashrates, the LTC default).
 	Style string `json:"style"`
 }
 
@@ -173,6 +174,10 @@ func Load(path string, env func(string) string) (Config, error) {
 		def := Default().Vardiff
 		if c.Vardiff.Initial == def.Initial && c.Vardiff.Min == def.Min {
 			c.Vardiff.Initial, c.Vardiff.Min = LTCStartDiff, LTCMinDiff
+		}
+		// The LTC app's page is the plain stats page unless one was chosen.
+		if c.UI.Style == "" {
+			c.UI.Style = "stats"
 		}
 	}
 	// An empty env value means "unset", so "off" is how env disables the UI.
@@ -339,9 +344,9 @@ func (c *Config) Validate() error {
 		add("payout.mode must be fixed or miner, got %q", c.Payout.Mode)
 	}
 	switch c.UI.Style {
-	case "", "mine", "simple":
+	case "", "mine", "simple", "stats":
 	default:
-		add("ui.style must be mine or simple, got %q", c.UI.Style)
+		add("ui.style must be mine, simple or stats, got %q", c.UI.Style)
 	}
 	if len(c.Payout.CoinbaseTag) > 60 {
 		add("payout.coinbase_tag must be at most 60 bytes")
