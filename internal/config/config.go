@@ -115,6 +115,12 @@ type Config struct {
 	DataDir string  `json:"data_dir"`
 }
 
+// SHAStartDiff is the BCH/BTC start difficulty: a rented 1 EH/s on one
+// connection sends ~3500 shares/s here for the instant before vardiff's
+// first step (well within the message burst), and a 1.2 TH/s Bitaxe gets
+// its difficulty probed down within a minute or two.
+const SHAStartDiff = 65536
+
 // LTC vardiff defaults (Scrypt share units).
 const (
 	LTCStartDiff = 262144
@@ -135,7 +141,7 @@ func Default() Config {
 			MaxConnections: 1024, MaxConnsPerIP: 64, AuthTimeoutS: 60, IdleTimeoutS: 600,
 			MaxLineBytes: 16384, MsgRatePerS: 100, MsgBurst: 500,
 		},
-		Vardiff: Vardiff{Initial: 1024, Min: 1, Max: 1e15, TargetShareS: 10, RetargetS: 60, VariancePct: 30},
+		Vardiff: Vardiff{Initial: SHAStartDiff, Min: 1, Max: 1e15, TargetShareS: 10, RetargetS: 60, VariancePct: 30},
 		API:     API{Listen: "127.0.0.1:8080", Prometheus: true},
 		UI:      UI{Listen: "0.0.0.0:8420"},
 		Log:     Log{Level: "info", Format: "json"},

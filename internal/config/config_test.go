@@ -185,7 +185,7 @@ func TestLTCVardiffDefaults(t *testing.T) {
 	// BTC keeps its own defaults.
 	env = map[string]string{"WB_RPC_USER": "u", "WB_RPC_PASSWORD": "p", "WB_COIN": "btc", "WB_PAYOUT_ADDRESS": "x"}
 	c, _ = Load("", func(k string) string { return env[k] })
-	if c.Vardiff.Initial != 1024 || c.Vardiff.Min != 1 {
+	if c.Vardiff.Initial != 65536 || c.Vardiff.Min != 1 {
 		t.Fatalf("BTC defaults changed: %v %v", c.Vardiff.Initial, c.Vardiff.Min)
 	}
 }

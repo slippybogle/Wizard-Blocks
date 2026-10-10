@@ -215,6 +215,30 @@ func TestRateLimit(t *testing.T) {
 	}
 }
 
+// Accepted shares give their token back: a miner sending only valid shares
+// is never cut off by the limiter, however fast; anything else still counts.
+func TestRateLimitSparesAcceptedShares(t *testing.T) {
+	cfg := testConfig()
+	cfg.MsgRate, cfg.MsgBurst = 1, 5
+	s := testServer(t, cfg)
+	a, b := net.Pipe()
+	defer b.Close()
+	sess := newSession(s, a, "127.0.0.1", 8)
+	for i := 0; i < 1000; i++ {
+		if !sess.allow() {
+			t.Fatalf("valid share %d refused by the limiter", i)
+		}
+		sess.refundToken() // accepted
+	}
+	n := 0
+	for sess.allow() && n <= 100 {
+		n++ // e.g. rejected shares or junk
+	}
+	if n != 5 {
+		t.Fatalf("after valid shares, %d other messages allowed, want the burst of 5", n)
+	}
+}
+
 func TestConnectionLimits(t *testing.T) {
 	s := testServer(t, testConfig()) // 2 per IP
 	if err := s.Listen(); err != nil {
