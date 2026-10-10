@@ -1,0 +1,37 @@
+manifestVersion: 1
+id: fladnagmai-wizard-blocks-btc
+category: crypto
+name: Wizard-Blocks-BTC
+version: "0.1.5-alpha"
+tagline: Solo-mine Bitcoin on your own node
+icon: https://raw.githubusercontent.com/fladnagmai/Wizard-Blocks/main/fladnagmai-wizard-blocks-btc/icon.svg
+description: >-
+  Wizard-Blocks-BTC is a self-hosted solo-mining Stratum V1 server for
+  Bitcoin. It talks to your Bitcoin Node app over RPC and ZMQ, and 100% of
+  every block reward plus fees goes to your own payout address. Works with a
+  pruned node and without txindex.
+
+
+  Point your Bitaxe, NerdQaxe or ASIC at umbrel.local:51492. The web UI is a
+  single stats page: node, pool, workers and found blocks.
+
+
+  On first run, open the app and set your payout address (bc1…, 1… or 3…) in
+  Settings; your node checks it. No work is issued to miners until it is set.
+  Settings are open to anyone logged into Umbrel; you can add an optional
+  settings password there.
+releaseNotes: >-
+  Small fixes.
+developer: fladnagmai
+website: https://github.com/fladnagmai/Wizard-Blocks
+dependencies:
+  - bitcoin
+repo: https://github.com/fladnagmai/Wizard-Blocks
+support: https://github.com/fladnagmai/Wizard-Blocks/issues
+port: 8421
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: fladnagmai
+submission: https://github.com/fladnagmai/Wizard-Blocks

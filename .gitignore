@@ -1,0 +1,2 @@
+.regtest-logs/
+deploy/bch-testnet/.env

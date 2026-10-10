@@ -1,0 +1,46 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # <app-id>_<service>_1. The web UI is only reachable through Umbrel's
+      # login-protected app proxy (dashboard port 8421, see umbrel-app.yml).
+      APP_HOST: fladnagmai-wizard-blocks-btc_engine_1
+      APP_PORT: 8420
+
+  engine:
+    # Same multi-arch image as the BCH app (.github/workflows/image.yml),
+    # run as the BTC engine with the simple UI.
+    image: ghcr.io/fladnagmai/wizard-blocks:0.1.4-alpha@sha256:7ce057e6ba45f7b9cf08803955457d3f28738d4042c0d62a4ce48b573018ceb1
+    user: "1000:1000"
+    restart: on-failure
+    stop_grace_period: 90s          # lets an in-flight block submission finish
+    environment:
+      WB_COIN: btc
+      # Node connection from the Bitcoin Node app's exports (bitcoin/exports.sh;
+      # RPC user/password are provided by umbrelOS, as for its other
+      # dependants). Fallback: data/override.env (see docs/INSTALL-UMBREL-BTC.md).
+      # Works on a pruned node with txindex off: the engine only uses
+      # getblocktemplate, submitblock, getblockchaininfo, getblockheader,
+      # validateaddress and similar node-state calls.
+      WB_RPC_URL: http://${APP_BITCOIN_NODE_IP:-10.21.21.8}:${APP_BITCOIN_RPC_PORT:-8332}
+      WB_RPC_USER: ${APP_BITCOIN_RPC_USER:-umbrel}
+      WB_RPC_PASSWORD: ${APP_BITCOIN_RPC_PASS:-}
+      WB_ZMQ_HASHBLOCK: tcp://${APP_BITCOIN_NODE_IP:-10.21.21.8}:${APP_BITCOIN_ZMQ_HASHBLOCK_PORT:-28334}
+      WB_ENV_FILE: /data/override.env
+      # Payout address: set in the web UI on first run (checked by the node).
+      WB_PAYOUT_MODE: fixed
+      WB_PAYOUT_ADDRESS: ""
+      WB_UI_LISTEN: 0.0.0.0:8420     # inside the container; app_proxy in front
+      WB_UI_SETTINGS_OPEN: "true"
+      WB_UI_STYLE: simple
+      WB_STRATUM_LISTEN: 0.0.0.0:51492
+      WB_STRATUM_PUBLIC_PORT: "51492"
+      WB_API_LISTEN: 127.0.0.1:8080   # stats API: inside the container only
+      WB_DATA_DIR: /data
+      WB_LOG_FORMAT: json
+    ports:
+      - "51492:51492"               # Stratum for miners on your LAN
+    volumes:
+      # Blocks, best share, luck, hashrate history, payout and settings.
+      - ${APP_DATA_DIR}/data:/data

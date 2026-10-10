@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Wizard-Blocks-BTC</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<canvas id="rain" aria-hidden="true"></canvas>
+<main>
+  <header>
+    <h1>WIZARD-BLOCKS-BTC <span class="dim">// SOLO POOL</span></h1>
+    <div id="status" class="dim">connecting…</div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" id="node">
+      <h2>NODE</h2>
+      <dl>
+        <dt>Synced</dt><dd id="n-synced">—</dd>
+        <dt>Height</dt><dd id="n-height">—</dd>
+        <dt>ZMQ</dt><dd id="n-zmq">—</dd>
+        <dt>Chain</dt><dd id="n-chain">—</dd>
+      </dl>
+    </section>
+
+    <section class="panel" id="pool">
+      <h2>POOL</h2>
+      <dl>
+        <dt>Hashrate 1m</dt><dd id="p-hr1">—</dd>
+        <dt>Hashrate 5m</dt><dd id="p-hr5">—</dd>
+        <dt>Hashrate 1h</dt><dd id="p-hr60">—</dd>
+        <dt>Workers</dt><dd id="p-workers">—</dd>
+        <dt>Accepted</dt><dd id="p-acc">—</dd>
+        <dt>Rejected</dt><dd id="p-rej">—</dd>
+        <dt>Bad messages</dt><dd id="p-bad">—</dd>
+        <dt>Best share</dt><dd id="p-best">—</dd>
+        <dt>Network diff</dt><dd id="p-netdiff">—</dd>
+        <dt>Effort</dt><dd id="p-effort">—</dd>
+        <dt>Blocks found</dt><dd id="p-blocks">—</dd>
+      </dl>
+    </section>
+
+    <section class="panel" id="settings">
+      <h2>SETTINGS</h2>
+      <p class="dim" id="s-stratum">Stratum: —</p>
+      <div id="s-login" hidden>
+        <label for="s-loginpw">Settings password</label>
+        <div class="row"><input id="s-loginpw" type="password" autocomplete="current-password"><button id="s-loginbtn">Unlock</button></div>
+      </div>
+      <div id="s-body">
+        <label for="s-addr">Payout address (bc1… / 1… / 3…)</label>
+        <div class="row"><input id="s-addr" spellcheck="false" autocomplete="off" placeholder="bc1q…"><button id="s-save">Save</button></div>
+        <p class="dim small">100% of every block reward goes here. Checked by your node; miners get no work until it is set.</p>
+        <label for="s-pw">Settings password (optional)</label>
+        <div class="row"><input id="s-pw" type="password" autocomplete="new-password" placeholder="8+ characters"><button id="s-setpw">Set</button><button id="s-rmpw" hidden>Remove</button></div>
+      </div>
+      <p id="s-msg" class="small" role="status"></p>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>WORKERS</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Name</th><th class="num">Hashrate</th><th class="num">Diff</th><th class="num">Acc / Rej</th><th class="num">Best share</th><th class="num">Last share</th></tr></thead>
+      <tbody id="workers"><tr><td colspan="6" class="dim">No miners yet.</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel">
+    <h2>BLOCKS FOUND</h2>
+    <div class="scroll"><table>
+      <thead><tr><th class="num">Height</th><th>Hash</th><th>Worker</th><th>Time</th><th class="num">Conf.</th><th>Status</th></tr></thead>
+      <tbody id="blocks"><tr><td colspan="6" class="dim">No blocks found yet.</td></tr></tbody>
+    </table></div>
+  </section>
+</main>
+</body>
+</html>

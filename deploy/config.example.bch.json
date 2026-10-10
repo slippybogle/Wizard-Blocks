@@ -1,0 +1,34 @@
+{
+  "coin": "bch",
+  "node": {
+    "rpc_url": "http://127.0.0.1:8332",
+    "rpc_user": "bchrpc",
+    "rpc_password": "change-me",
+    "zmq_hashblock": "tcp://127.0.0.1:28332",
+    "poll_interval_ms": 1000,
+    "template_refresh_s": 30
+  },
+  "payout": {
+    "mode": "fixed",
+    "address": "bitcoincash:qr6m7j9njldwwzlg9v7v53unlr4jkmx6eylep8ekg2",
+    "coinbase_tag": "/wizard-blocks/"
+  },
+  "stratum": {
+    "listen": "0.0.0.0:62023",
+    "extranonce2_size": 8,
+    "version_rolling_mask": "1fffe000"
+  },
+  "vardiff": {
+    "initial": 1024,
+    "min": 1,
+    "max": 1e15,
+    "target_share_s": 10,
+    "retarget_s": 60,
+    "variance_pct": 30,
+    "fixed_diff": 0
+  },
+  "api": { "listen": "127.0.0.1:8080", "prometheus": true },
+  "ui": { "listen": "0.0.0.0:8420", "admin_password": "change-me-too" },
+  "log": { "level": "info", "format": "json" },
+  "data_dir": "/data"
+}

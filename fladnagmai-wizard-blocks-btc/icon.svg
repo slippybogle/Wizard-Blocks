@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="48" fill="#000"/>
+  <g font-family="monospace" font-weight="bold" font-size="22" fill="#9a9a9a" fill-opacity="0.22">
+    <text x="22" y="40">1</text><text x="22" y="70">0</text><text x="22" y="100">1</text><text x="22" y="200">0</text><text x="22" y="230">1</text>
+    <text x="222" y="56">0</text><text x="222" y="86">1</text><text x="222" y="176">1</text><text x="222" y="206">0</text><text x="222" y="236">0</text>
+  </g>
+  <text x="128" y="150" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="104" fill="#00ff41">₿</text>
+  <text x="128" y="214" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="28" fill="#00ff41">WIZARD</text>
+</svg>

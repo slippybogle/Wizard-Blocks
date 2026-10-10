@@ -1,0 +1,45 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # <app-id>_<service>_1. The web UI is only reachable through Umbrel's
+      # login-protected app proxy.
+      APP_HOST: fladnagmai-wizard-blocks_engine_1
+      APP_PORT: 8420
+
+  engine:
+    # Multi-arch (amd64 + arm64) image built by .github/workflows/image.yml.
+    image: ghcr.io/fladnagmai/wizard-blocks:0.1.4-alpha@sha256:7ce057e6ba45f7b9cf08803955457d3f28738d4042c0d62a4ce48b573018ceb1
+    user: "1000:1000"
+    restart: on-failure
+    stop_grace_period: 90s          # lets an in-flight block submission finish
+    environment:
+      WB_COIN: bch
+      # Node connection from the Bitcoin Cash Node app's exports
+      # (bitcoin-cash-node/exports.sh). No secrets are stored here: the RPC
+      # password is derived by umbrelOS. Fallback: data/override.env (see
+      # docs/INSTALL-UMBREL.md).
+      WB_RPC_URL: http://${APP_BITCOIN_CASH_NODE_NODE_IP:-10.21.21.50}:${APP_BITCOIN_CASH_NODE_RPC_PORT:-8332}
+      WB_RPC_USER: ${APP_BITCOIN_CASH_NODE_RPC_USER:-umbrel}
+      WB_RPC_PASSWORD: ${APP_BITCOIN_CASH_NODE_RPC_PASS:-}
+      WB_ZMQ_HASHBLOCK: tcp://${APP_BITCOIN_CASH_NODE_NODE_IP:-10.21.21.50}:${APP_BITCOIN_CASH_NODE_ZMQ_HASHBLOCK_PORT:-28332}
+      WB_ENV_FILE: /data/override.env
+      # Payout address: set in the web UI (The Ledger, Settings) on first run.
+      # Miners are refused until it is set and verified by the node.
+      WB_PAYOUT_MODE: fixed
+      WB_PAYOUT_ADDRESS: ""
+      # Settings are open to anyone logged into Umbrel (app_proxy protects the
+      # UI). An optional settings password can be set from the Settings page.
+      WB_UI_LISTEN: 0.0.0.0:8420
+      WB_UI_SETTINGS_OPEN: "true"
+      WB_STRATUM_LISTEN: 0.0.0.0:62023
+      WB_STRATUM_PUBLIC_PORT: "62023"
+      WB_API_LISTEN: 127.0.0.1:8080   # stats API: inside the container only
+      WB_DATA_DIR: /data
+      WB_LOG_FORMAT: json
+    ports:
+      - "62023:62023"               # Stratum for miners on your LAN
+    volumes:
+      # Blocks, best share, luck, hashrate history, payout and difficulty settings.
+      - ${APP_DATA_DIR}/data:/data
