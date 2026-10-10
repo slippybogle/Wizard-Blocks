@@ -32,6 +32,11 @@ var staticFS embed.FS
 //go:embed simple
 var simpleFS embed.FS
 
+// testFS is the plain mainnet test page served at /test/.
+//
+//go:embed testpage
+var testFS embed.FS
+
 // Config is what the UI needs to know about the engine's configuration.
 type Config struct {
 	Coin            string
@@ -132,6 +137,9 @@ func (s *Server) Listen(addr string) error {
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/blocks", s.handleBlocks)
 	s.routesAdmin(mux)
+	testSub, _ := fs.Sub(testFS, "testpage")
+	mux.Handle("/test/", http.StripPrefix("/test/", http.FileServer(http.FS(testSub))))
+	mux.Handle("/test", http.RedirectHandler("test/", http.StatusFound))
 	// Static files carry the build version as their ETag: browsers revalidate
 	// every load (no-cache) and always get the new files after an update.
 	etag := `"wb-` + s.cfg.Version + `"`
