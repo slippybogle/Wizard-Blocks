@@ -11,7 +11,7 @@ services:
   engine:
     # Same multi-arch image as the BCH app (.github/workflows/image.yml),
     # run as the BTC engine with the simple UI.
-    image: ghcr.io/fladnagmai/wizard-blocks:0.1.7-alpha@sha256:9b9ccb8f0bee3b50842686b8ac6c65d85e62777f648de31fd4c9f882f372dc47
+    image: ghcr.io/fladnagmai/wizard-blocks:0.1.8-alpha@sha256:20f7af12e736bbf092fd4e954ae758602a2ca3745372aefe9547c44ea10749ba
     user: "1000:1000"
     restart: on-failure
     stop_grace_period: 90s          # lets an in-flight block submission finish
