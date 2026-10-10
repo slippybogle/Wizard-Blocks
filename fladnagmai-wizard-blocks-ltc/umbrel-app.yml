@@ -9,7 +9,7 @@ description: >-
   TEST BUILD. Wizard-Blocks-LTC is a self-hosted solo-mining Stratum V1
   server for Litecoin with Dogecoin merged mining: every share is checked
   against both chains, so one Scrypt miner mines LTC and DOGE at once. It
-  talks to your Litecoin Node and Dogecoin Node apps over RPC and ZMQ, and
+  talks to your Litecoin + Dogecoin Node app over RPC and ZMQ, and
   100% of every block reward goes to your own payout addresses.
 
 
@@ -29,8 +29,7 @@ releaseNotes: >-
 developer: fladnagmai
 website: https://github.com/fladnagmai/Wizard-Blocks
 dependencies:
-  - fladnagmai-litecoin-node
-  - fladnagmai-dogecoin-node
+  - fladnagmai-ltc-doge-node
 repo: https://github.com/fladnagmai/Wizard-Blocks
 support: https://github.com/fladnagmai/Wizard-Blocks/issues
 port: 8422

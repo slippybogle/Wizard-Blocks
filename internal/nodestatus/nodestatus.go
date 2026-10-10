@@ -1,6 +1,6 @@
 // Package nodestatus polls the Litecoin and Dogecoin nodes over RPC and
-// serves one plain page with both nodes' live status (the Node Status
-// Umbrel app).
+// serves one plain page with both nodes' live status (the page of the
+// Litecoin + Dogecoin Node Umbrel app).
 package nodestatus
 
 import (

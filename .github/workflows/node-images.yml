@@ -2,8 +2,9 @@ name: node-images
 
 # Builds the Litecoin Node and Dogecoin Node images (amd64 + arm64) from the
 # official release binaries (checksums and signatures are verified inside
-# the build, see nodes/*/Dockerfile) and the Node Status page
-# (cmd/nodestatus, nodes/status/Dockerfile), and pushes them to
+# the build, see nodes/*/Dockerfile) and the app's status page
+# (cmd/nodestatus, nodes/status/Dockerfile) for the Litecoin + Dogecoin Node
+# app, and pushes them to
 # ghcr.io/fladnagmai/litecoin-node, dogecoin-node and node-status.
 on:
   push:

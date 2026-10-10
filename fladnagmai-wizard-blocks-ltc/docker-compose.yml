@@ -17,13 +17,12 @@ services:
     stop_grace_period: 90s          # lets an in-flight block submission finish
     environment:
       WB_COIN: ltc
-      # Litecoin Node app (exports.sh).
+      # Litecoin + Dogecoin Node app (fladnagmai-ltc-doge-node/exports.sh).
       WB_RPC_URL: http://${APP_LITECOIN_NODE_IP}:${APP_LITECOIN_RPC_PORT}
       WB_RPC_USER: ${APP_LITECOIN_RPC_USER}
       WB_RPC_PASSWORD: ${APP_LITECOIN_RPC_PASS}
       WB_ZMQ_HASHBLOCK: tcp://${APP_LITECOIN_NODE_IP}:${APP_LITECOIN_ZMQ_HASHBLOCK_PORT}
-      # Dogecoin Node app (exports.sh): merged mining once a DOGE payout
-      # address is set in the web UI.
+      # Dogecoin: merged mining once a DOGE payout address is set in the web UI.
       WB_DOGE_RPC_URL: http://${APP_DOGECOIN_NODE_IP}:${APP_DOGECOIN_RPC_PORT}
       WB_DOGE_RPC_USER: ${APP_DOGECOIN_RPC_USER}
       WB_DOGE_RPC_PASSWORD: ${APP_DOGECOIN_RPC_PASS}

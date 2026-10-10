@@ -1,4 +1,4 @@
-// Node Status: both nodes' live state, refreshed every 5 s. Plain text only.
+// Litecoin + Dogecoin Node page: both nodes' live state, refreshed every 5 s. Plain text only.
 'use strict';
 
 const int = (n) => (n || 0).toLocaleString('en-US');
@@ -38,7 +38,7 @@ function state(n) {
 }
 
 function render(st) {
-  const lines = ['Node Status', ''];
+  const lines = ['Litecoin + Dogecoin Node', ''];
   for (const n of st.nodes || []) {
     lines.push(n.name);
     lines.push(`  status       ${state(n)}`);
@@ -64,7 +64,7 @@ async function refresh() {
     if (!r.ok) throw new Error(r.status);
     render(await r.json());
   } catch (e) {
-    document.getElementById('out').textContent = 'Node Status\n\nnot reachable';
+    document.getElementById('out').textContent = 'Litecoin + Dogecoin Node\n\nstatus page not reachable';
   }
 }
 

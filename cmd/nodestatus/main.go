@@ -1,5 +1,6 @@
 // Command nodestatus serves one page with the live status of the Litecoin
-// and Dogecoin nodes (the Node Status Umbrel app). Configured by env:
+// and Dogecoin nodes (the page of the Litecoin + Dogecoin Node Umbrel app).
+// Configured by env:
 //
 //	NS_LISTEN       listen address (default 0.0.0.0:8080)
 //	NS_POLL_S       seconds between checks (default 5)
