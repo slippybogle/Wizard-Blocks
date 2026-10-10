@@ -15,7 +15,9 @@ description: >-
 
   The app page shows both nodes live on one page: synced or sync progress,
   height and headers, time since the last block, peers, mempool, difficulty,
-  disk use and version.
+  disk use and version. A button pauses or resumes the Dogecoin sync, so the
+  Litecoin node can have the bandwidth and disk while it syncs (the pause is
+  kept across restarts; Dogecoin merged mining is off while it is paused).
 
 
   It exports both nodes' RPC and ZMQ details for Wizard-Blocks-LTC (Litecoin

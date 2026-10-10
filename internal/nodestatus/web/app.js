@@ -29,6 +29,11 @@ function ago(secs) {
 }
 
 function state(n) {
+  const p = n.paused ? (n.network_active === false ? ' · PAUSED (sync stopped)' : ' · pausing…') : '';
+  return base(n) + p;
+}
+
+function base(n) {
   switch (n.state) {
     case 'synced': return 'synced';
     case 'syncing': return n.headers > 0 ? `syncing ${(n.progress * 100).toFixed(2)}%` : 'syncing (finding peers)';
@@ -56,6 +61,46 @@ function render(st) {
   }
   lines.push(`checked ${ago(st.now - Math.min(...(st.nodes || []).map((n) => n.checked || st.now)))}`);
   document.getElementById('out').textContent = lines.join('\n');
+  controls(st.nodes || []);
+}
+
+// Pause/resume buttons for the nodes whose sync may be paused (Dogecoin):
+// lets the Litecoin node have the bandwidth and disk while it syncs.
+let busy = false;
+function controls(nodes) {
+  const box = document.getElementById('controls');
+  const want = nodes.filter((n) => n.pausable);
+  box.replaceChildren(...want.map((n) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.disabled = busy;
+    b.textContent = n.paused ? `resume ${n.name.replace(' Node', '')} sync` : `pause ${n.name.replace(' Node', '')} sync`;
+    b.addEventListener('click', () => setPaused(n, !n.paused));
+    return b;
+  }));
+}
+
+async function setPaused(n, paused) {
+  busy = true;
+  const msg = document.getElementById('msg');
+  msg.textContent = `${paused ? 'pausing' : 'resuming'} ${n.name}…`;
+  try {
+    const r = await fetch(`api/nodes/${encodeURIComponent(n.key)}/sync`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'X-NS-Action': '1', 'Content-Type': 'application/json' }, // CSRF guard
+      body: JSON.stringify({ paused }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    msg.textContent = paused
+      ? `${n.name} sync paused (kept across restarts). Merged mining of this coin is off until you resume.${j.warning ? ' ' + j.warning : ''}`
+      : `${n.name} sync resumed.${j.warning ? ' ' + j.warning : ''}`;
+  } catch (e) {
+    msg.textContent = `could not ${paused ? 'pause' : 'resume'}: ${e.message}`;
+  } finally {
+    busy = false;
+    refresh();
+  }
 }
 
 async function refresh() {

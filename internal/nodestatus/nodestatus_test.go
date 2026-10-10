@@ -148,7 +148,7 @@ func TestPollerChecksNodesConcurrently(t *testing.T) {
 	p := NewPoller([]Node{
 		{Name: "Litecoin Node", RPC: node.NewClient(fast.URL, "u", "p", "", time.Second)},
 		{Name: "Dogecoin Node", RPC: node.NewClient(slow.URL, "u", "p", "", 500*time.Millisecond)},
-	}, time.Hour)
+	}, time.Hour, "")
 	if s := p.Snapshot(); s[0].State != "starting" || s[1].Name != "Dogecoin Node" {
 		t.Fatalf("before the first check: %+v", s)
 	}
@@ -165,7 +165,7 @@ func TestPollerChecksNodesConcurrently(t *testing.T) {
 
 func TestHandler(t *testing.T) {
 	fast := fakeNode(t, "u", "secretpw", ltcResults(10, 10, 1), nil)
-	p := NewPoller([]Node{{Name: "Litecoin Node", RPC: node.NewClient(fast.URL, "u", "secretpw", "", time.Second)}}, time.Hour)
+	p := NewPoller([]Node{{Name: "Litecoin Node", RPC: node.NewClient(fast.URL, "u", "secretpw", "", time.Second)}}, time.Hour, "")
 	p.CheckAll(context.Background())
 	srv := httptest.NewServer(Handler(p, "0.1.0"))
 	defer srv.Close()

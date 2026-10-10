@@ -4,3 +4,11 @@ pre {
   font: 14px/1.5 ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+#controls { padding: 0 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+#controls button {
+  background: #000; color: #ff69b4; border: 1px solid #ff69b4; border-radius: 3px;
+  padding: 8px 14px; font: 14px ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace; cursor: pointer;
+}
+#controls button:hover { background: rgba(255, 105, 180, 0.15); }
+#controls button:disabled { opacity: 0.5; cursor: wait; }
+#msg { margin: 8px 16px 16px; font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; min-height: 1.5em; }

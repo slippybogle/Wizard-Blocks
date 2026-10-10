@@ -4,6 +4,9 @@
 //
 //	NS_LISTEN       listen address (default 0.0.0.0:8080)
 //	NS_POLL_S       seconds between checks (default 5)
+//	NS_PAUSABLE     comma-separated node keys whose sync can be paused from
+//	                the page (e.g. "doge")
+//	NS_STATE_FILE   where pauses are kept across restarts (default: memory only)
 //	LTC_RPC_URL, LTC_RPC_USER, LTC_RPC_PASS     Litecoin node (optional)
 //	DOGE_RPC_URL, DOGE_RPC_USER, DOGE_RPC_PASS  Dogecoin node (optional)
 package main
@@ -17,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,15 +38,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "NS_POLL_S must be 1..3600")
 		os.Exit(2)
 	}
+	pausable := map[string]bool{}
+	for _, k := range strings.Split(os.Getenv("NS_PAUSABLE"), ",") {
+		if k = strings.TrimSpace(strings.ToLower(k)); k != "" {
+			pausable[k] = true
+		}
+	}
 	var nodes []nodestatus.Node
-	for _, n := range []struct{ name, prefix string }{{"Litecoin Node", "LTC"}, {"Dogecoin Node", "DOGE"}} {
+	for _, n := range []struct{ key, name, prefix string }{{"ltc", "Litecoin Node", "LTC"}, {"doge", "Dogecoin Node", "DOGE"}} {
 		url := os.Getenv(n.prefix + "_RPC_URL")
 		if url == "" {
 			continue
 		}
-		nodes = append(nodes, nodestatus.Node{Name: n.name,
+		nodes = append(nodes, nodestatus.Node{Key: n.key, Name: n.name, Pausable: pausable[n.key],
 			RPC: node.NewClient(url, os.Getenv(n.prefix+"_RPC_USER"), os.Getenv(n.prefix+"_RPC_PASS"), "", 10*time.Second)})
-		log.Info("watching node", "name", n.name, "url", url)
+		log.Info("watching node", "name", n.name, "url", url, "pausable", pausable[n.key])
 	}
 	if len(nodes) == 0 {
 		fmt.Fprintln(os.Stderr, "set LTC_RPC_URL and/or DOGE_RPC_URL")
@@ -50,7 +60,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	p := nodestatus.NewPoller(nodes, time.Duration(poll)*time.Second)
+	p := nodestatus.NewPoller(nodes, time.Duration(poll)*time.Second, os.Getenv("NS_STATE_FILE"))
 	go p.Run(ctx)
 	srv := &http.Server{Addr: listen, Handler: nodestatus.Handler(p, version), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
