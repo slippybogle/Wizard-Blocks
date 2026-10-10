@@ -174,6 +174,10 @@ func loadCoin(t *testing.T, coin string) {
 	docker(t, "network", "create", netName)
 	t.Cleanup(func() { docker(t, "network", "rm", netName) })
 	n := startNode(t, coin, netName, "wbit-load-"+coin+"-"+suffix)
+	if coin == "bch" {
+		// BCHN serves getblocktemplate only with a peer.
+		startNode(t, coin, netName, "wbit-load-"+coin+"-b-"+suffix, "-connect="+n.Name)
+	}
 	var none any
 	n.call(t, n.RPC, "createwallet", &none, "w")
 	var hs []string
@@ -261,6 +265,15 @@ func loadCoin(t *testing.T, coin string) {
 	lr = runWbload(t, append(common, "-conns", "50", "-profile", "mixed", "-d", fmt.Sprint(nd*0.4), "-duration", "2s")...)
 	logRun("rentx.* override", lr)
 	diffsAre("rentx.* override", lr, nd*0.1)
+
+	lr = runWbload(t, append(common, "-conns", "20", "-rate", "2", "-duration", "5s")...)
+	logRun("shares accepted", lr)
+	if lr.Res.Accepted == 0 || len(lr.Res.Rejected) > 0 || lr.Res.Failed > 0 {
+		t.Errorf("shares: accepted %d rejected %v failed %v", lr.Res.Accepted, lr.Res.Rejected, lr.Res.FailReasons)
+	}
+	if os.Getenv("WB_LOAD_SMOKE") != "" {
+		return // protocol checks only
+	}
 
 	// 2. Connection limits as shipped (1024 total, 64 per IP).
 	lr = runWbload(t, append(common, "-conns", "80", "-duration", "2s")...)
