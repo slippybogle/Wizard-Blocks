@@ -63,6 +63,31 @@ func (r *rateWindow) hashrate(now time.Time, window time.Duration) float64 {
 	return sum * 4294967296 / secs
 }
 
+// lastMinute returns H/s averaged over the last completed clock minute, so
+// the figure changes only once a minute. A worker that started during that
+// minute is divided by the part of it since its first share (≥ 10 s).
+func (r *rateWindow) lastMinute(now time.Time) float64 {
+	if r.first.IsZero() {
+		return 0
+	}
+	end := now.Unix() / 60 * 60
+	start := end - 60
+	sum := 0.0
+	for e := start / bucketSecs; e < end/bucketSecs; e++ {
+		if i := e % numBuckets; r.stamps[i] == e {
+			sum += r.buckets[i]
+		}
+	}
+	secs := 60.0
+	if f := r.first.Unix(); f > start {
+		if f >= end {
+			return 0
+		}
+		secs = math.Max(float64(end-f), bucketSecs)
+	}
+	return sum * 4294967296 / secs
+}
+
 // Worker statistics, keyed by the full username.
 type Worker struct {
 	Name        string
@@ -480,6 +505,7 @@ func (c *Collector) Blocks() []BlockRecord {
 type WorkerSnapshot struct {
 	Name        string            `json:"name"`
 	Connections int               `json:"connections"`
+	Hashrate60s float64           `json:"hashrate_60s"` // last completed minute; changes once a minute
 	Hashrate1m  float64           `json:"hashrate_1m"`
 	Hashrate5m  float64           `json:"hashrate_5m"`
 	Hashrate1h  float64           `json:"hashrate_1h"`
@@ -495,6 +521,7 @@ type WorkerSnapshot struct {
 
 // PoolSnapshot aggregates all workers.
 type PoolSnapshot struct {
+	Hashrate60s   float64           `json:"hashrate_60s"` // last completed minute; changes once a minute
 	Hashrate1m    float64           `json:"hashrate_1m"`
 	Hashrate5m    float64           `json:"hashrate_5m"`
 	Hashrate1h    float64           `json:"hashrate_1h"`
@@ -544,6 +571,7 @@ func (c *Collector) Snapshot() Snapshot {
 		Coin: c.coin, Version: c.version, Uptime: now.Sub(c.start).Seconds(),
 		Node: c.node, Template: c.tmpl,
 		Pool: PoolSnapshot{
+			Hashrate60s: c.pool.lastMinute(now),
 			Hashrate1m:  c.pool.hashrate(now, time.Minute),
 			Hashrate5m:  c.pool.hashrate(now, 5*time.Minute),
 			Hashrate1h:  c.pool.hashrate(now, time.Hour),
@@ -564,10 +592,11 @@ func (c *Collector) Snapshot() Snapshot {
 	for _, w := range c.workers {
 		ws := WorkerSnapshot{
 			Name: w.Name, Connections: w.Connections,
-			Hashrate1m: w.rate.hashrate(now, time.Minute),
-			Hashrate5m: w.rate.hashrate(now, 5*time.Minute),
-			Hashrate1h: w.rate.hashrate(now, time.Hour),
-			Accepted:   w.Accepted, Rejected: w.Rejected, Rejects: copyMap(w.Rejects),
+			Hashrate60s: w.rate.lastMinute(now),
+			Hashrate1m:  w.rate.hashrate(now, time.Minute),
+			Hashrate5m:  w.rate.hashrate(now, 5*time.Minute),
+			Hashrate1h:  w.rate.hashrate(now, time.Hour),
+			Accepted:    w.Accepted, Rejected: w.Rejected, Rejects: copyMap(w.Rejects),
 			BestDiff: w.BestDiff, Difficulty: w.Difficulty, Race: w.Race,
 		}
 		if !w.LastShare.IsZero() {

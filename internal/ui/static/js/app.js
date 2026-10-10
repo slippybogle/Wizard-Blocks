@@ -174,7 +174,7 @@ function syncInsets() {
 function renderHUD(st) {
   const p = st.pool, d = st.derived, n = st.node, t = st.template;
   const online = st.workers.filter((w) => w.connections > 0).length;
-  setStat('hrNow', fmtHash(p.hashrate_1m));
+  setStat('hrNow', fmtHash(p.hashrate_60s));
   setStat('workers', `${online}/${st.workers.length}`, online ? C.ink : C.ink3);
   setStat('hr1h', fmtHash(p.hashrate_1h));
   const partial = d.hashrate_24h_span_s > 0 && d.hashrate_24h_span_s < 86000;
@@ -339,7 +339,7 @@ function renderLedger(st) {
   const wrows = st.workers.map((w) => {
     const on = w.connections > 0;
     return `<tr><td>${esc(w.name)}</td><td><span class="badge ${on ? 'st-online' : 'st-offline'}">${on ? 'online' : 'offline'}</span></td>
-      <td class="num">${esc(fmtHash(w.hashrate_1m))}</td><td class="num">${esc(fmtInt(w.shares_accepted))} / ${esc(fmtInt(w.shares_rejected))}</td>
+      <td class="num">${esc(fmtHash(w.hashrate_60s))}</td><td class="num">${esc(fmtInt(w.shares_accepted))} / ${esc(fmtInt(w.shares_rejected))}</td>
       <td class="num">${esc(fmtDiff(w.best_share_difficulty))}</td><td class="num">${esc(fmtDiff(w.difficulty))}</td>
       <td>${esc(fmtAgo(w.last_share_at, now))}</td></tr>`;
   }).join('');
