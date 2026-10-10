@@ -1,0 +1,126 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # The live status page of both nodes.
+      APP_HOST: fladnagmai-ltc-doge-node_web_1
+      APP_PORT: 8080
+
+  litecoind:
+    # Built by nodes/litecoin/Dockerfile (release signature and checksum verified
+    # in the build).
+    image: ghcr.io/fladnagmai/litecoin-node:0.21.5.8@sha256:0d7f8f2e548d092c7ea101d834edb7ab981ab218202572b7915d119b41c5ff99
+    depends_on:
+      web:
+        condition: service_healthy   # web writes this node's prune target first
+    user: "1000:1000"
+    restart: unless-stopped         # also comes back after the page restarts it (new prune target)
+    stop_grace_period: 15m          # lets the node flush its database on shutdown
+    environment:
+      # For "docker exec ... sh -c 'litecoin-cli -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS ...'".
+      RPC_USER: ${APP_LITECOIN_RPC_USER}
+      RPC_PASS: ${APP_LITECOIN_RPC_PASS}
+    command:
+      - -datadir=/data
+      - -conf=/conf/litecoin.conf          # prune target, written by web (the app page)
+      - -printtoconsole
+      - -server
+      - -txindex=0
+      - -dbcache=300
+      - -maxmempool=100
+      - -maxconnections=24
+      - -par=2
+      - -rpcthreads=4
+      - -rpcworkqueue=64
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=10.21.0.0/16
+      - -rpcport=9332
+      - -rpcuser=${APP_LITECOIN_RPC_USER}
+      - -rpcpassword=${APP_LITECOIN_RPC_PASS}
+      - -zmqpubhashblock=tcp://0.0.0.0:28332
+      - -port=9333
+    volumes:
+      - ${APP_DATA_DIR}/litecoin:/data
+      - ${APP_DATA_DIR}/conf:/conf:ro
+    networks:
+      default:
+        ipv4_address: ${APP_LITECOIN_NODE_IP}
+
+  dogecoind:
+    # Built by nodes/dogecoin/Dockerfile (release signature and checksum verified
+    # in the build).
+    image: ghcr.io/fladnagmai/dogecoin-node:1.14.9@sha256:55ca68103778ed1b6ae40f4ac46c252800c4dfffdda9252fd034aea95e2324cc
+    depends_on:
+      web:
+        condition: service_healthy   # web writes this node's prune target first
+    user: "1000:1000"
+    restart: unless-stopped         # also comes back after the page restarts it (new prune target)
+    stop_grace_period: 15m          # lets the node flush its database on shutdown
+    environment:
+      # For "docker exec ... sh -c 'dogecoin-cli -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS ...'".
+      RPC_USER: ${APP_DOGECOIN_RPC_USER}
+      RPC_PASS: ${APP_DOGECOIN_RPC_PASS}
+    command:
+      - -datadir=/data
+      - -conf=/conf/dogecoin.conf          # prune target, written by web (the app page)
+      - -printtoconsole
+      - -server
+      - -txindex=0
+      - -dbcache=200
+      - -maxmempool=100
+      - -maxconnections=24
+      - -par=2
+      - -rpcthreads=4
+      - -rpcworkqueue=64
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=10.21.0.0/16
+      - -rpcport=22555
+      - -rpcuser=${APP_DOGECOIN_RPC_USER}
+      - -rpcpassword=${APP_DOGECOIN_RPC_PASS}
+      - -zmqpubhashblock=tcp://0.0.0.0:28332
+      - -port=22556
+    volumes:
+      - ${APP_DATA_DIR}/dogecoin:/data
+      - ${APP_DATA_DIR}/conf:/conf:ro
+    networks:
+      default:
+        ipv4_address: ${APP_DOGECOIN_NODE_IP}
+
+  web:
+    # The app page: both nodes' live status (nodes/status/Dockerfile,
+    # cmd/nodestatus, standard library only).
+    image: ghcr.io/fladnagmai/node-status:0.1.0@sha256:88ae9d8d127b4d72faf5abdd01c277047995bda7fe99fa904ea19a45a5f5f861
+    user: "1000:1000"
+    restart: on-failure
+    healthcheck:
+      # Healthy once both nodes' conf files hold a prune target. The app ships
+      # none (an app update would overwrite the owner's choice); web writes
+      # them at start, and the nodes wait for this so they never start
+      # unpruned or on a reset value.
+      test: ["CMD", "/usr/local/bin/nodestatus", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    environment:
+      NS_LISTEN: 0.0.0.0:8080
+      NS_POLL_S: "5"
+      # The page can pause/resume the Dogecoin sync (its p2p network), e.g. so
+      # the Litecoin node gets the bandwidth while it syncs. Kept in
+      # NS_STATE_FILE and re-applied after restarts.
+      NS_PAUSABLE: doge
+      NS_STATE_FILE: /data/state.json
+      # The nodes' -conf files: the page sets each prune target there and
+      # restarts that node to apply it.
+      LTC_CONF: /conf/litecoin.conf
+      DOGE_CONF: /conf/dogecoin.conf
+      LTC_RPC_URL: http://${APP_LITECOIN_NODE_IP}:${APP_LITECOIN_RPC_PORT}
+      LTC_RPC_USER: ${APP_LITECOIN_RPC_USER}
+      LTC_RPC_PASS: ${APP_LITECOIN_RPC_PASS}
+      DOGE_RPC_URL: http://${APP_DOGECOIN_NODE_IP}:${APP_DOGECOIN_RPC_PORT}
+      DOGE_RPC_USER: ${APP_DOGECOIN_RPC_USER}
+      DOGE_RPC_PASS: ${APP_DOGECOIN_RPC_PASS}
+    volumes:
+      - ${APP_DATA_DIR}/status:/data
+      - ${APP_DATA_DIR}/conf:/conf

@@ -1,0 +1,41 @@
+manifestVersion: 1
+id: fladnagmai-ltc-doge-node
+category: bitcoin
+name: Litecoin + Dogecoin Node
+version: "1.0.0-wb1"
+tagline: Pruned Litecoin Core and Dogecoin Core nodes in one app, with a live status page
+icon: https://raw.githubusercontent.com/fladnagmai/Wizard-Blocks/main/fladnagmai-ltc-doge-node/icon.svg
+description: >-
+  Litecoin Core v0.21.5.8 and Dogecoin Core v1.14.9 in one app, built from the
+  official release binaries (each build checks the release signature and the
+  checksum). Both nodes are pruned with txindex off and memory settings sized
+  for a shared Umbrel: Litecoin dbcache=300 MiB, Dogecoin dbcache=200 MiB,
+  mempool 100 MiB and 24 peers each.
+
+
+  The app page shows both nodes live on one page: synced or sync progress,
+  height and headers, time since the last block, peers, mempool, difficulty,
+  disk use and version. A button pauses or resumes the Dogecoin sync, so the
+  Litecoin node can have the bandwidth and disk while it syncs (the pause is
+  kept across restarts; Dogecoin merged mining is off while it is paused).
+  Each node's prune target can be changed there too (Litecoin 550 MiB to
+  20 GB, Dogecoin 2200 MiB to 20 GB; applying it restarts that node).
+
+
+  It exports both nodes' RPC and ZMQ details for Wizard-Blocks-LTC (Litecoin
+  mining with Dogecoin merged mining). The first sync downloads both chains
+  once even though they are pruned; on a home connection that takes days.
+releaseNotes: >-
+  First release.
+developer: fladnagmai
+website: https://github.com/fladnagmai/Wizard-Blocks
+dependencies: []
+repo: https://github.com/fladnagmai/Wizard-Blocks
+support: https://github.com/fladnagmai/Wizard-Blocks/issues
+port: 8423
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: fladnagmai
+submission: https://github.com/fladnagmai/Wizard-Blocks
