@@ -7,7 +7,22 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<pre id="out">loading…</pre>
+<header><span id="title">Wizard-Blocks</span><span id="status">loading…</span></header>
+<main id="main"></main>
+<section class="card settings" id="settings">
+  <h2>SETTINGS</h2>
+  <div id="s-login" hidden>
+    <label for="s-pw">settings password</label>
+    <div class="line"><input id="s-pw" type="password" autocomplete="current-password"><button id="s-unlock" type="button">unlock</button></div>
+  </div>
+  <div id="s-body">
+    <label for="s-ltc">LTC payout address</label>
+    <div class="line"><input id="s-ltc" spellcheck="false" autocomplete="off" placeholder="ltc1…"><button id="s-ltc-save" type="button">save</button></div>
+    <label for="s-doge">DOGE payout address (empty = Litecoin only)</label>
+    <div class="line"><input id="s-doge" spellcheck="false" autocomplete="off" placeholder="D…"><button id="s-doge-save" type="button">save</button></div>
+  </div>
+  <p id="s-msg"></p>
+</section>
 <script src="app.js"></script>
 </body>
 </html>

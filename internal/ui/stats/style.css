@@ -1,6 +1,43 @@
-html, body { margin: 0; background: #000; color: #ddd; }
-pre {
-  margin: 0; padding: 16px;
-  font: 14px/1.5 ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
-  white-space: pre-wrap; overflow-wrap: anywhere;
+:root { --pink: #ff69b4; --dim: rgba(255, 105, 180, 0.62); --line: rgba(255, 105, 180, 0.28); }
+html, body { margin: 0; background: #000; color: var(--pink); }
+body { font: 13px/1.55 ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+header {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: bold; font-size: 15px;
+}
+#status { font-weight: normal; font-size: 13px; }
+main { padding: 16px; display: flex; flex-direction: column; gap: 16px; max-width: 1280px; }
+.row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.card { border: 1px solid var(--line); border-radius: 4px; padding: 12px; box-sizing: border-box; min-width: 0; }
+.row .card { flex: 0 1 300px; width: 300px; max-width: 100%; }
+.card h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.04em; }
+.kv { display: grid; grid-template-columns: auto 1fr; column-gap: 16px; row-gap: 2px; }
+.kv .k { color: var(--dim); }
+.kv .v { text-align: right; overflow-wrap: anywhere; }
+.wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th { color: var(--dim); font-weight: normal; text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+td.empty { text-align: left; color: var(--dim); }
+.bad { font-weight: bold; text-decoration: underline; }
+[hidden] { display: none !important; }
+.settings { margin: 0 16px 24px; max-width: 640px; }
+.settings label { display: block; color: var(--dim); margin: 8px 0 4px; }
+.settings .line { display: flex; gap: 8px; }
+.settings input {
+  flex: 1; min-width: 0; background: #000; color: var(--pink); border: 1px solid var(--line);
+  border-radius: 3px; padding: 6px 8px; font: inherit;
+}
+.settings input:focus { outline: 1px solid var(--pink); }
+.settings button {
+  background: #000; color: var(--pink); border: 1px solid var(--pink); border-radius: 3px;
+  padding: 6px 12px; font: inherit; cursor: pointer;
+}
+.settings button:hover { background: rgba(255, 105, 180, 0.15); }
+#s-msg { margin: 10px 0 0; min-height: 1.5em; overflow-wrap: anywhere; }
+@media (max-width: 680px) {
+  .settings { margin: 0 12px 20px; }
+  main { padding: 12px; }
+  .row .card { flex: 1 1 100%; width: 100%; }
 }

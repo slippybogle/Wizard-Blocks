@@ -46,11 +46,11 @@ func TestStatsPage(t *testing.T) {
 	base := "http://" + srv.Addr() + "/"
 
 	page := get(t, base)
-	if !strings.Contains(page, `<pre id="out">`) || !strings.Contains(page, `src="app.js"`) || strings.Contains(page, "<style") || strings.Contains(page, "<script>") {
-		t.Fatalf("not the plain stats page (or inline code, which the CSP forbids):\n%s", page)
+	if !strings.Contains(page, `<main id="main">`) || !strings.Contains(page, `src="app.js"`) || strings.Contains(page, "<style") || strings.Contains(page, "<script>") {
+		t.Fatalf("not the stats page (or inline code, which the CSP forbids):\n%s", page)
 	}
 	js := get(t, base+"app.js")
-	for _, want := range []string{"hashrate_1m", "hashrate_5m", "hashrate_1h", "hashrate_24h", "best_share_difficulty", "hashrate_live", "textContent"} {
+	for _, want := range []string{"hashrate_live", "hashrate_1h", "hashrate_24h", "best_share_difficulty", "node_detail", "chains", "aux_blocks", "workers", "template", "textContent"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js does not use %s", want)
 		}
@@ -58,8 +58,8 @@ func TestStatsPage(t *testing.T) {
 	if strings.Contains(js, "innerHTML") {
 		t.Error("app.js writes HTML (miner names must go in as text)")
 	}
-	if css := get(t, base+"style.css"); !strings.Contains(css, "background: #000") {
-		t.Error("style.css: background is not black")
+	if css := get(t, base+"style.css"); !strings.Contains(css, "background: #000") || !strings.Contains(css, "--pink: #ff69b4") {
+		t.Error("style.css: not hot pink text on black")
 	}
 
 	var s struct {
