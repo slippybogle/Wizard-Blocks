@@ -965,7 +965,7 @@ func testNodeRestart(t *testing.T, en *Engine, a *Node, rec *recorder) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	docker(t, "restart", "-t", "5", a.Name)
+	docker(t, "restart", "-t", "60", a.Name) // time to flush; a normal shutdown takes 0-2 s
 	waitFor(t, "engine notices node outage", 60*time.Second, func() bool { return !en.E.Stats().Snapshot().Node.Connected })
 	waitFor(t, "node RPC back", 60*time.Second, func() bool { _, err := a.RPC.GetBlockchainInfo(ctx); return err == nil })
 	var none any

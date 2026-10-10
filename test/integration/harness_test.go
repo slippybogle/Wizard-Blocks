@@ -78,8 +78,9 @@ func startNode(t *testing.T, coin, network, name string, extra ...string) *Node 
 	args = append(args, extra...)
 	// Fixed host ports: Docker reassigns ephemeral ports when a container
 	// restarts, and the node-restart test needs stable endpoints.
+	ports := freePorts(t, 2) // distinct: RPC and ZMQ
 	run := []string{"run", "-d", "--name", name, "--network", network, "--network-alias", name,
-		"-p", fmt.Sprintf("127.0.0.1:%d:18443", freePort(t)), "-p", fmt.Sprintf("127.0.0.1:%d:28332", freePort(t)),
+		"-p", fmt.Sprintf("127.0.0.1:%d:18443", ports[0]), "-p", fmt.Sprintf("127.0.0.1:%d:28332", ports[1]),
 		"--entrypoint", "bitcoind", image}
 	docker(t, append(run, args...)...)
 	t.Cleanup(func() {
@@ -284,11 +285,28 @@ func apiGet(t *testing.T, en *Engine, path string) []byte {
 	return out
 }
 
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+// freePorts returns n distinct free loopback ports. All n listeners stay
+// open until every port is chosen: closing each one first let the OS hand
+// the same port out twice (docker then failed with "Bind ... failed").
+func freePorts(t *testing.T, n int) []int {
+	ports := make([]int, 0, n)
+	for range n {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Close()
+		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return ports
+}
+
+// Regression (hotfix 30/30 run 15): two ports picked for one container must
+// differ, or docker fails with "Bind for 127.0.0.1:N failed".
+func TestFreePortsDistinct(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		if p := freePorts(t, 2); p[0] == p[1] {
+			t.Fatalf("same port twice: %v", p)
+		}
+	}
 }
