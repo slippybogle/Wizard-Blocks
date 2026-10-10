@@ -75,6 +75,10 @@ type Session struct {
 	done      chan struct{}
 
 	// Token bucket for inbound message rate limiting (reader goroutine only).
+	// An accepted share gives its token back: it is proven work at the
+	// difficulty this pool set, so the allowance grows with the work a
+	// miner actually does (a big miner on one connection is never cut off
+	// while vardiff catches up); everything else counts.
 	tokens     float64
 	tokensAt   time.Time
 	badMsgs    int
@@ -228,6 +232,11 @@ func (c *Session) allow() bool {
 	}
 	c.tokens--
 	return true
+}
+
+// refundToken gives back the token of an accepted share (reader goroutine).
+func (c *Session) refundToken() {
+	c.tokens = math.Min(c.srv.cfg.MsgBurst, c.tokens+1)
 }
 
 // rawSample quotes the start of a raw message for the logs.
@@ -565,6 +574,9 @@ func (c *Session) sendWork(w *work.Work) {
 	if c.lastWork != nil && c.lastWork.Gen != w.Gen {
 		clean = true
 	}
+	if !c.started {
+		c.vd.reset(time.Now()) // vardiff timing starts with the first job
+	}
 	c.started = true
 	c.lastWork = w
 	d := effectiveDiff(c.diff, w)
@@ -806,6 +818,7 @@ func effectiveDiffOrRaw(d float64, w *work.Work) float64 {
 // accept answers a valid share; prevHash is the previous-block hash of the
 // job it was mined on, so stats credit the right round.
 func (c *Session) accept(id json.RawMessage, prevHash, worker string, credited, achieved float64, interp string, hash bitcoin.Hash) {
+	c.refundToken()
 	c.reply(id, true, nil)
 	c.srv.st.ShareAcceptedOn(prevHash, worker, credited, achieved, interp)
 	c.srv.log.Debug("share accepted", "ip", c.ip, "worker", worker, "hash", hash.String(),
