@@ -29,7 +29,7 @@ type Status struct {
 	Chain        string  `json:"chain,omitempty"`
 	Blocks       int64   `json:"blocks"`
 	Headers      int64   `json:"headers"`
-	Progress     float64 `json:"progress"` // verificationprogress, 0..1
+	Progress     float64 `json:"progress"`             // verificationprogress, 0..1
 	Peers        *int    `json:"peers,omitempty"`      // nil: getnetworkinfo failed
 	MempoolTx    *int64  `json:"mempool_tx,omitempty"` // nil: getmempoolinfo failed
 	MempoolBytes int64   `json:"mempool_bytes"`
