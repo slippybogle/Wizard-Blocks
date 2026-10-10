@@ -219,15 +219,16 @@ func TestAuxEffortIsPerChain(t *testing.T) {
 	}
 }
 
-// The 60 s figure is the average of the last completed minute: it stays the
-// same throughout a minute and changes only at the next minute boundary.
-func TestHashrateLastMinuteChangesOncePerMinute(t *testing.T) {
+// The live figure is the average of the 3.5 minutes before the last minute
+// boundary: it stays the same throughout a minute and changes only at the
+// next boundary.
+func TestHashrateLiveChangesOncePerMinute(t *testing.T) {
 	var r rateWindow
 	t0 := time.Unix(1_800_000_000, 0) // a minute boundary
-	// Minute 1: one diff-1 share per second; minute 2: two per second.
-	for s := 0; s < 120; s++ {
+	// One diff-1 share per second for 4 minutes, then two per second.
+	for s := 0; s < 480; s++ {
 		n := 1
-		if s >= 60 {
+		if s >= 240 {
 			n = 2
 		}
 		for k := 0; k < n; k++ {
@@ -235,29 +236,43 @@ func TestHashrateLastMinuteChangesOncePerMinute(t *testing.T) {
 		}
 	}
 	h1 := 4294967296.0 // 1 share/s at difficulty 1
-	if got := r.lastMinute(t0.Add(30*time.Second), 4294967296); got != 0 {
-		t.Fatalf("during the first minute: %g, want 0 (no completed minute yet)", got)
+	if got := r.live(t0.Add(30*time.Second), 4294967296); got != 0 {
+		t.Fatalf("during the first minute: %g, want 0", got)
 	}
-	for s := 60; s < 120; s++ {
-		if got := r.lastMinute(t0.Add(time.Duration(s)*time.Second), 4294967296); got != h1 {
-			t.Fatalf("at %ds: %g, want %g (minute 1 average, unchanged all minute)", s, got, h1)
+	for s := 240; s < 300; s++ { // window [30s, 240s): all at 1/s
+		if got := r.live(t0.Add(time.Duration(s)*time.Second), 4294967296); got != h1 {
+			t.Fatalf("at %ds: %g, want %g (unchanged all minute)", s, got, h1)
 		}
 	}
-	if got := r.lastMinute(t0.Add(120*time.Second), 4294967296); got != 2*h1 {
-		t.Fatalf("at 120s: %g, want %g (minute 2 average)", got, 2*h1)
-	}
-	if got := r.lastMinute(t0.Add(179*time.Second), 4294967296); got != 2*h1 {
-		t.Fatalf("at 179s: %g, want %g", got, 2*h1)
-	}
-	if got := r.lastMinute(t0.Add(180*time.Second), 4294967296); got != 0 {
-		t.Fatalf("at 180s (no shares in minute 3): %g, want 0", got)
+	// At 300 s the window is [90s, 300s): 150 s at 1/s + 60 s at 2/s.
+	if got, want := r.live(t0.Add(300*time.Second), 4294967296), h1*(150+120)/210; got != want {
+		t.Fatalf("at 300s: %g, want %g", got, want)
 	}
 	// A worker that started 30 s into a minute: averaged over its 30 s.
 	var y rateWindow
 	for s := 30; s < 60; s++ {
 		y.add(t0.Add(time.Duration(s)*time.Second), 1)
 	}
-	if got := y.lastMinute(t0.Add(75*time.Second), 4294967296); got != h1 {
+	if got := y.live(t0.Add(75*time.Second), 4294967296); got != h1 {
 		t.Fatalf("young worker: %g, want %g", got, h1)
+	}
+}
+
+// The pool's live hashrate is the sum of its workers' live hashrates.
+func TestPoolLiveIsSumOfWorkers(t *testing.T) {
+	c := New("btc", "t", "")
+	for i := 0; i < 300; i++ {
+		c.ShareAccepted("a", 1000, 1000, "")
+		if i%3 == 0 {
+			c.ShareAccepted("b", 1000, 1000, "")
+		}
+	}
+	s := c.Snapshot()
+	sum := 0.0
+	for _, w := range s.Workers {
+		sum += w.HashrateLive
+	}
+	if s.Pool.HashrateLive != sum {
+		t.Fatalf("pool live %g, sum of workers %g", s.Pool.HashrateLive, sum)
 	}
 }
