@@ -1,0 +1,31 @@
+manifestVersion: 1
+id: fladnagmai-node-status
+category: bitcoin
+name: Node Status
+version: "0.1.0"
+tagline: Live status of your Litecoin and Dogecoin nodes on one page
+icon: https://raw.githubusercontent.com/fladnagmai/Wizard-Blocks/main/fladnagmai-node-status/icon.svg
+description: >-
+  One plain page with both nodes' live state, refreshed every few seconds:
+  synced or sync progress, height and headers, time since the last block,
+  peers, mempool, difficulty, disk use and version.
+
+
+  Reads the Litecoin Node and Dogecoin Node apps over RPC on the Umbrel's
+  internal network; nothing is exposed outside it.
+releaseNotes: >-
+  First release.
+developer: fladnagmai
+website: https://github.com/fladnagmai/Wizard-Blocks
+dependencies:
+  - fladnagmai-litecoin-node
+  - fladnagmai-dogecoin-node
+repo: https://github.com/fladnagmai/Wizard-Blocks
+support: https://github.com/fladnagmai/Wizard-Blocks/issues
+port: 8425
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: fladnagmai
+submission: https://github.com/fladnagmai/Wizard-Blocks
