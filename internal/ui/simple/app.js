@@ -70,7 +70,7 @@ function renderChain(prefix, title, v, isAux) {
   $(prefix === 'cp' ? 'cp-title' : 'ca-title').textContent = title;
   set(prefix + '-height', v.height ? fmtInt(v.height) : '—');
   set(prefix + '-diff', fmtDiff(v.network_difficulty));
-  set(prefix + '-effort', v.effort_pct == null ? '—' : v.effort_pct.toFixed(2) + ' %');
+  set(prefix + '-effort', v.effort_pct == null ? '—' : v.effort_pct.toFixed(4) + ' %');
   set(prefix + '-exp', fmtSecs(v.expected_block_s));
   set(prefix + '-odds', `${pct(v.odds_day)} / ${pct(v.odds_week)}`);
   set(prefix + '-blocks', `${fmtInt(v.blocks_found)}${v.blocks_pending ? ` (+${v.blocks_pending} pending)` : ''}`);

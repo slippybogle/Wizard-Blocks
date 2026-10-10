@@ -1,5 +1,6 @@
 :root { --g: #00ff41; --g2: #00c832; --dim: #0b8f2f; --panel: rgba(0, 0, 0, 0.78); --red: #ff4d4d; }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; min-height: 100%; background: #000; }
 body {
   color: var(--g); font: bold 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -51,7 +52,8 @@ a { color: var(--g); }
 .dgrid label input, .dgrid label select { width: 100%; box-sizing: border-box; margin-top: 4px; }
 select, textarea { background: #000; color: var(--g); border: 1px solid var(--dim); font: inherit; padding: 6px 8px; }
 textarea { width: 100%; box-sizing: border-box; resize: vertical; }
-label.chk { display: flex; gap: 8px; align-items: center; color: var(--g); }
+label.chk { display: flex; gap: 8px; align-items: center; justify-content: flex-start; color: var(--g); }
+label.chk input[type="checkbox"] { flex: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--g); }
 input.short { width: 5em; flex: none; }
 code { color: var(--g); }
 #d-msg { min-height: 1.5em; margin: 8px 0 0; }
