@@ -11,6 +11,9 @@ services:
     # Built by nodes/litecoin/Dockerfile (release signature and checksum verified
     # in the build).
     image: ghcr.io/fladnagmai/litecoin-node:0.21.5.8@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    depends_on:
+      web:
+        condition: service_healthy   # web writes this node's prune target first
     user: "1000:1000"
     restart: unless-stopped         # also comes back after the page restarts it (new prune target)
     stop_grace_period: 15m          # lets the node flush its database on shutdown
@@ -20,7 +23,7 @@ services:
       RPC_PASS: ${APP_LITECOIN_RPC_PASS}
     command:
       - -datadir=/data
-      - -conf=/conf/litecoin.conf          # prune target, set from the app page
+      - -conf=/conf/litecoin.conf          # prune target, written by web (the app page)
       - -printtoconsole
       - -server
       - -txindex=0
@@ -48,6 +51,9 @@ services:
     # Built by nodes/dogecoin/Dockerfile (release signature and checksum verified
     # in the build).
     image: ghcr.io/fladnagmai/dogecoin-node:1.14.9@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    depends_on:
+      web:
+        condition: service_healthy   # web writes this node's prune target first
     user: "1000:1000"
     restart: unless-stopped         # also comes back after the page restarts it (new prune target)
     stop_grace_period: 15m          # lets the node flush its database on shutdown
@@ -57,7 +63,7 @@ services:
       RPC_PASS: ${APP_DOGECOIN_RPC_PASS}
     command:
       - -datadir=/data
-      - -conf=/conf/dogecoin.conf          # prune target, set from the app page
+      - -conf=/conf/dogecoin.conf          # prune target, written by web (the app page)
       - -printtoconsole
       - -server
       - -txindex=0
@@ -87,6 +93,16 @@ services:
     image: ghcr.io/fladnagmai/node-status:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
     user: "1000:1000"
     restart: on-failure
+    healthcheck:
+      # Healthy once both nodes' conf files hold a prune target. The app ships
+      # none (an app update would overwrite the owner's choice); web writes
+      # them at start, and the nodes wait for this so they never start
+      # unpruned or on a reset value.
+      test: ["CMD", "/usr/local/bin/nodestatus", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     environment:
       NS_LISTEN: 0.0.0.0:8080
       NS_POLL_S: "5"

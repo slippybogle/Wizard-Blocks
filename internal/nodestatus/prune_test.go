@@ -73,9 +73,11 @@ func TestSetPrune(t *testing.T) {
 	if s := p.Snapshot()[0]; s.PruneRunning != 10000 {
 		t.Fatalf("after restart: %+v", s)
 	}
-	// The choice is remembered: an app update resetting the file to the
-	// default is undone at startup, and the node restarted once it answers.
+	// The choice is remembered: a file reset to the default (and a node that
+	// came back with it) is undone at startup, and the node restarted once
+	// it answers.
 	writePrune(conf, 2200)
+	sn.prune = 2200 << 20
 	p2 := NewPoller(nodes, time.Hour, state)
 	fixed, err := p2.EnsurePruneConf()
 	if err != nil || len(fixed) != 1 {
@@ -95,8 +97,54 @@ func TestSetPrune(t *testing.T) {
 	}
 }
 
+// A prune change made while the node cannot be stopped (warming up) is
+// applied once it answers; it used to wait for a manual restart.
+func TestSetPruneDuringWarmup(t *testing.T) {
+	sn, srv := newSwitchNode(t)
+	sn.prune, sn.warmup = 2200<<20, true
+	conf := filepath.Join(t.TempDir(), "dogecoin.conf")
+	writePrune(conf, 2200)
+	p := NewPoller([]Node{{Key: "doge", Name: "Dogecoin Node", RPC: node.NewClient(srv.URL, "", "", "", time.Second), Prune: dogePrune(conf)}}, time.Hour, "")
+	ctx := context.Background()
+	if err := p.SetPrune(ctx, "doge", 5000); err != nil {
+		t.Fatal(err)
+	}
+	p.CheckAll(ctx)
+	if sn.stopCount() != 0 {
+		t.Fatal("stopped while warming up")
+	}
+	sn.mu.Lock()
+	sn.warmup = false
+	sn.mu.Unlock()
+	p.CheckAll(ctx)
+	if sn.stopCount() != 1 {
+		t.Fatalf("new target never applied: stops %d", sn.stopCount())
+	}
+}
+
+// First install: the app ships no conf files; the page writes the default
+// before the nodes start, so a node already running that target is not
+// restarted.
+func TestEnsurePruneConfFirstStart(t *testing.T) {
+	sn, srv := newSwitchNode(t)
+	sn.prune = 2200 << 20
+	conf := filepath.Join(t.TempDir(), "dogecoin.conf")
+	if PruneConfReady(conf, 2200) {
+		t.Fatal("missing file reported ready")
+	}
+	p := NewPoller([]Node{{Key: "doge", Name: "Dogecoin Node", RPC: node.NewClient(srv.URL, "", "", "", time.Second), Prune: dogePrune(conf)}}, time.Hour, "")
+	if fixed, err := p.EnsurePruneConf(); err != nil || len(fixed) != 1 || !PruneConfReady(conf, 2200) {
+		t.Fatalf("%v %v", fixed, err)
+	}
+	p.CheckAll(context.Background())
+	p.CheckAll(context.Background())
+	if sn.stopCount() != 0 {
+		t.Fatalf("restarted a node already on its target: %d", sn.stopCount())
+	}
+}
+
 // A missing conf file (the node would run unpruned) is recreated with the
-// default target and the node restarted.
+// default target and a node running without it restarted.
 func TestEnsurePruneConfMissing(t *testing.T) {
 	sn, srv := newSwitchNode(t)
 	conf := filepath.Join(t.TempDir(), "dogecoin.conf")

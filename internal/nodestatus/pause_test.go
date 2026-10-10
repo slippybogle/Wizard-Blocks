@@ -22,6 +22,7 @@ type switchNode struct {
 	calls  []bool
 	stops  int
 	prune  int64 // prune_target_size reported, bytes
+	warmup bool  // answer every call with -28 (loading block index)
 }
 
 func (sn *switchNode) stopCount() int { sn.mu.Lock(); defer sn.mu.Unlock(); return sn.stops }
@@ -45,6 +46,10 @@ func newSwitchNode(t *testing.T) (*switchNode, *httptest.Server) {
 		sn.mu.Lock()
 		defer sn.mu.Unlock()
 		var res any
+		if sn.warmup {
+			json.NewEncoder(w).Encode(map[string]any{"id": req.ID, "result": nil, "error": map[string]any{"code": -28, "message": "Loading block index..."}})
+			return
+		}
 		switch req.Method {
 		case "getblockchaininfo":
 			res = map[string]any{"chain": "main", "blocks": 100, "headers": 5000, "bestblockhash": "ab", "verificationprogress": 0.02, "pruned": true, "prune_target_size": sn.prune}

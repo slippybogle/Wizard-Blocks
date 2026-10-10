@@ -205,20 +205,24 @@ func (p *Poller) CheckAll(ctx context.Context) {
 				}
 			}
 			s.Paused = paused
+			if n.Prune != nil {
+				s.PruneOptions = n.Prune.Options
+				if v, err := readPrune(n.Prune.ConfFile); err == nil {
+					s.PruneSet = v
+				}
+			}
 			p.mu.Lock()
 			restart := p.restart[n.Key]
+			if restart && s.PruneSet > 0 && s.PruneRunning == s.PruneSet {
+				delete(p.restart, n.Key) // already running with it
+				restart = false
+			}
 			p.mu.Unlock()
 			if restart && (s.State == "synced" || s.State == "syncing") && n.RPC.Call(cctx, "stop", nil, nil) == nil {
 				p.mu.Lock()
 				delete(p.restart, n.Key)
 				p.mu.Unlock()
 				s.State, s.Error = "starting", "restarting to apply its prune target"
-			}
-			if n.Prune != nil {
-				s.PruneOptions = n.Prune.Options
-				if v, err := readPrune(n.Prune.ConfFile); err == nil {
-					s.PruneSet = v
-				}
 			}
 			p.mu.Lock()
 			p.last[i] = s

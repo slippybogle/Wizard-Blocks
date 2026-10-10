@@ -11,6 +11,8 @@
 //	                set to let the page change pruning (the node restarts)
 //	LTC_RPC_URL, LTC_RPC_USER, LTC_RPC_PASS     Litecoin node (optional)
 //	DOGE_RPC_URL, DOGE_RPC_USER, DOGE_RPC_PASS  Dogecoin node (optional)
+//
+// "nodestatus healthcheck" exits 0 once every *_CONF file has a prune target.
 package main
 
 import (
@@ -53,6 +55,17 @@ func main() {
 		"ltc":  {Default: 2000, Min: 550, Options: []int{550, 2000, 5000, 10000, 20000}},
 		"doge": {Default: 2200, Min: 2200, Options: []int{2200, 5000, 10000, 20000}},
 	}
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		// Healthy once every node's conf file has a prune target (written
+		// by EnsurePruneConf at start); the nodes wait for this.
+		for k, prefix := range map[string]string{"ltc": "LTC", "doge": "DOGE"} {
+			if conf := os.Getenv(prefix + "_CONF"); conf != "" && !nodestatus.PruneConfReady(conf, prunes[k].Min) {
+				fmt.Fprintln(os.Stderr, "no prune target yet in", conf)
+				os.Exit(1)
+			}
+		}
+		os.Exit(0)
+	}
 	for _, n := range []struct{ key, name, prefix string }{{"ltc", "Litecoin Node", "LTC"}, {"doge", "Dogecoin Node", "DOGE"}} {
 		url := os.Getenv(n.prefix + "_RPC_URL")
 		if url == "" {
@@ -78,7 +91,7 @@ func main() {
 	if fixed, err := p.EnsurePruneConf(); err != nil {
 		log.Error("prune config", "err", err)
 	} else if len(fixed) > 0 {
-		log.Warn("wrote missing or reset prune config; restarting those nodes when they answer", "nodes", fixed)
+		log.Warn("wrote missing or reset prune config; a node running another target is restarted once it answers", "nodes", fixed)
 	}
 	go p.Run(ctx)
 	srv := &http.Server{Addr: listen, Handler: nodestatus.Handler(p, version), ReadHeaderTimeout: 5 * time.Second}

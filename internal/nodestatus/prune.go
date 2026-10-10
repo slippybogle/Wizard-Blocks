@@ -61,9 +61,10 @@ func writePrune(path string, mib int) error {
 
 // EnsurePruneConf makes sure every node's conf file has a valid prune line
 // (a node without one runs unpruned and fills the disk) that matches the
-// last choice made on the page (an app update may reset the file). Nodes
-// whose file it rewrote are restarted once they answer RPC. It returns
-// their keys.
+// last choice made on the page. The app ships no conf files (an app update
+// would overwrite them); they are created here, before the nodes start.
+// Nodes whose file it rewrote are restarted once they answer RPC unless
+// they already run that target. It returns their keys.
 func (p *Poller) EnsurePruneConf() ([]string, error) {
 	var fixed []string
 	var errs []error
@@ -118,9 +119,20 @@ func (p *Poller) SetPrune(ctx context.Context, key string, mib int) error {
 		return fmt.Errorf("cannot save the prune target: %w", err)
 	}
 	if err := n.RPC.Call(ctx, "stop", nil, nil); err != nil {
-		return fmt.Errorf("saved; restart the node to apply it (stop failed: %w)", err)
+		// Warming up or briefly unreachable: restart it once it answers.
+		p.mu.Lock()
+		p.restart[key] = true
+		p.mu.Unlock()
 	}
 	return nil
+}
+
+// PruneConfReady reports whether path holds a valid prune target (at least
+// min). The web container's healthcheck uses it so the nodes, which wait for
+// it, never start without one (a node without one runs unpruned).
+func PruneConfReady(path string, min int) bool {
+	v, err := readPrune(path)
+	return err == nil && v >= min
 }
 
 // ErrNotPrunable is returned for a node without a prune config.
