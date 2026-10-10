@@ -6,7 +6,9 @@
 //	NS_POLL_S       seconds between checks (default 5)
 //	NS_PAUSABLE     comma-separated node keys whose sync can be paused from
 //	                the page (e.g. "doge")
-//	NS_STATE_FILE   where pauses are kept across restarts (default: memory only)
+//	NS_STATE_FILE   where pauses and prune choices are kept (default: memory only)
+//	LTC_CONF, DOGE_CONF  the nodes' -conf files holding their prune target;
+//	                set to let the page change pruning (the node restarts)
 //	LTC_RPC_URL, LTC_RPC_USER, LTC_RPC_PASS     Litecoin node (optional)
 //	DOGE_RPC_URL, DOGE_RPC_USER, DOGE_RPC_PASS  Dogecoin node (optional)
 package main
@@ -45,14 +47,26 @@ func main() {
 		}
 	}
 	var nodes []nodestatus.Node
+	// Prune targets (MiB): the nodes' minimums are 550 (Litecoin Core) and
+	// 2200 (Dogecoin Core); the defaults are the app's shipped settings.
+	prunes := map[string]nodestatus.PruneConfig{
+		"ltc":  {Default: 2000, Min: 550, Options: []int{550, 2000, 5000, 10000, 20000}},
+		"doge": {Default: 2200, Min: 2200, Options: []int{2200, 5000, 10000, 20000}},
+	}
 	for _, n := range []struct{ key, name, prefix string }{{"ltc", "Litecoin Node", "LTC"}, {"doge", "Dogecoin Node", "DOGE"}} {
 		url := os.Getenv(n.prefix + "_RPC_URL")
 		if url == "" {
 			continue
 		}
-		nodes = append(nodes, nodestatus.Node{Key: n.key, Name: n.name, Pausable: pausable[n.key],
-			RPC: node.NewClient(url, os.Getenv(n.prefix+"_RPC_USER"), os.Getenv(n.prefix+"_RPC_PASS"), "", 10*time.Second)})
-		log.Info("watching node", "name", n.name, "url", url, "pausable", pausable[n.key])
+		nd := nodestatus.Node{Key: n.key, Name: n.name, Pausable: pausable[n.key],
+			RPC: node.NewClient(url, os.Getenv(n.prefix+"_RPC_USER"), os.Getenv(n.prefix+"_RPC_PASS"), "", 10*time.Second)}
+		if conf := os.Getenv(n.prefix + "_CONF"); conf != "" {
+			pc := prunes[n.key]
+			pc.ConfFile = conf
+			nd.Prune = &pc
+		}
+		nodes = append(nodes, nd)
+		log.Info("watching node", "name", n.name, "url", url, "pausable", nd.Pausable, "prune_conf", os.Getenv(n.prefix+"_CONF"))
 	}
 	if len(nodes) == 0 {
 		fmt.Fprintln(os.Stderr, "set LTC_RPC_URL and/or DOGE_RPC_URL")
@@ -61,6 +75,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	p := nodestatus.NewPoller(nodes, time.Duration(poll)*time.Second, os.Getenv("NS_STATE_FILE"))
+	if fixed, err := p.EnsurePruneConf(); err != nil {
+		log.Error("prune config", "err", err)
+	} else if len(fixed) > 0 {
+		log.Warn("wrote missing or reset prune config; restarting those nodes when they answer", "nodes", fixed)
+	}
 	go p.Run(ctx)
 	srv := &http.Server{Addr: listen, Handler: nodestatus.Handler(p, version), ReadHeaderTimeout: 5 * time.Second}
 	go func() {

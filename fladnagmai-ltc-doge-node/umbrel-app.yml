@@ -18,6 +18,8 @@ description: >-
   disk use and version. A button pauses or resumes the Dogecoin sync, so the
   Litecoin node can have the bandwidth and disk while it syncs (the pause is
   kept across restarts; Dogecoin merged mining is off while it is paused).
+  Each node's prune target can be changed there too (Litecoin 550 MiB to
+  20 GB, Dogecoin 2200 MiB to 20 GB; applying it restarts that node).
 
 
   It exports both nodes' RPC and ZMQ details for Wizard-Blocks-LTC (Litecoin

@@ -22,7 +22,8 @@ type Node struct {
 	Key      string // "ltc", "doge": used in the API
 	Name     string // "Litecoin Node"
 	RPC      *node.Client
-	Pausable bool // its sync (p2p network) can be paused from the page
+	Pausable bool         // its sync (p2p network) can be paused from the page
+	Prune    *PruneConfig // its prune target can be changed from the page (nil: no)
 }
 
 // Status is one node's state at the last check. Fields a node does not
@@ -34,23 +35,28 @@ type Status struct {
 	// Pausable: the page offers pause/resume. Paused: a pause is in force
 	// (kept across node restarts). NetworkActive: the node's own p2p switch
 	// (nil if unknown).
-	Pausable      bool    `json:"pausable"`
-	Paused        bool    `json:"paused"`
-	NetworkActive *bool   `json:"network_active,omitempty"`
-	Error         string  `json:"error,omitempty"`
-	Version       string  `json:"version,omitempty"`
-	Chain         string  `json:"chain,omitempty"`
-	Blocks        int64   `json:"blocks"`
-	Headers       int64   `json:"headers"`
-	Progress      float64 `json:"progress"`             // verificationprogress, 0..1
-	Peers         *int    `json:"peers,omitempty"`      // nil: getnetworkinfo failed
-	MempoolTx     *int64  `json:"mempool_tx,omitempty"` // nil: getmempoolinfo failed
-	MempoolBytes  int64   `json:"mempool_bytes"`
-	TipTime       int64   `json:"tip_time,omitempty"` // unix time of the best block
-	Difficulty    float64 `json:"difficulty"`
-	Pruned        bool    `json:"pruned"`
-	SizeOnDisk    int64   `json:"size_on_disk,omitempty"`
-	Checked       int64   `json:"checked"` // unix time of this check
+	Pausable      bool  `json:"pausable"`
+	Paused        bool  `json:"paused"`
+	NetworkActive *bool `json:"network_active,omitempty"`
+	// Prune target: as set (conf file, MiB) and as the running node reports
+	// it (MiB; differs until the node restarts), with the page's choices.
+	PruneSet     int     `json:"prune_set_mib,omitempty"`
+	PruneRunning int     `json:"prune_running_mib,omitempty"`
+	PruneOptions []int   `json:"prune_options,omitempty"`
+	Error        string  `json:"error,omitempty"`
+	Version      string  `json:"version,omitempty"`
+	Chain        string  `json:"chain,omitempty"`
+	Blocks       int64   `json:"blocks"`
+	Headers      int64   `json:"headers"`
+	Progress     float64 `json:"progress"`             // verificationprogress, 0..1
+	Peers        *int    `json:"peers,omitempty"`      // nil: getnetworkinfo failed
+	MempoolTx    *int64  `json:"mempool_tx,omitempty"` // nil: getmempoolinfo failed
+	MempoolBytes int64   `json:"mempool_bytes"`
+	TipTime      int64   `json:"tip_time,omitempty"` // unix time of the best block
+	Difficulty   float64 `json:"difficulty"`
+	Pruned       bool    `json:"pruned"`
+	SizeOnDisk   int64   `json:"size_on_disk,omitempty"`
+	Checked      int64   `json:"checked"` // unix time of this check
 }
 
 // Poller checks every node each interval and keeps the latest statuses.
@@ -62,21 +68,29 @@ type Poller struct {
 	mu     sync.Mutex
 	last   []Status
 	paused map[string]bool // by node key
+	prune  map[string]int  // last prune target chosen on the page, by node key
+	// restart: nodes to stop (so their container restarts with the conf
+	// file just written) as soon as they answer RPC.
+	restart map[string]bool
 }
 
 // NewPoller creates a poller for nodes (checked in this order). Pauses set
 // from the page are kept in stateFile (if set) and re-applied after a node
 // or this service restarts.
 func NewPoller(nodes []Node, interval time.Duration, stateFile string) *Poller {
-	p := &Poller{nodes: nodes, interval: interval, stateFile: stateFile, last: make([]Status, len(nodes)), paused: map[string]bool{}}
+	p := &Poller{nodes: nodes, interval: interval, stateFile: stateFile, last: make([]Status, len(nodes)), paused: map[string]bool{}, prune: map[string]int{}, restart: map[string]bool{}}
 	if stateFile != "" {
 		var saved struct {
 			Paused map[string]bool `json:"paused"`
+			Prune  map[string]int  `json:"prune_mib"`
 		}
 		if b, err := os.ReadFile(stateFile); err == nil && json.Unmarshal(b, &saved) == nil {
 			for _, n := range nodes {
 				if n.Pausable && saved.Paused[n.Key] {
 					p.paused[n.Key] = true
+				}
+				if n.Prune != nil && saved.Prune[n.Key] >= n.Prune.Min {
+					p.prune[n.Key] = saved.Prune[n.Key]
 				}
 			}
 		}
@@ -97,12 +111,7 @@ var (
 // off (on) at once, and the choice is saved and re-applied on every check,
 // so it survives node restarts. Resuming always switches the network on.
 func (p *Poller) SetPaused(ctx context.Context, key string, paused bool) error {
-	var n *Node
-	for i := range p.nodes {
-		if p.nodes[i].Key == key {
-			n = &p.nodes[i]
-		}
-	}
+	n := p.node(key)
 	if n == nil {
 		return ErrUnknownNode
 	}
@@ -128,11 +137,20 @@ func (p *Poller) SetPaused(ctx context.Context, key string, paused bool) error {
 	return nil
 }
 
+func (p *Poller) node(key string) *Node {
+	for i := range p.nodes {
+		if p.nodes[i].Key == key {
+			return &p.nodes[i]
+		}
+	}
+	return nil
+}
+
 func (p *Poller) saveLocked() error {
 	if p.stateFile == "" {
 		return nil
 	}
-	b, _ := json.MarshalIndent(map[string]any{"paused": p.paused}, "", "  ")
+	b, _ := json.MarshalIndent(map[string]any{"paused": p.paused, "prune_mib": p.prune}, "", "  ")
 	tmp := p.stateFile + ".tmp"
 	if err := os.MkdirAll(filepath.Dir(p.stateFile), 0o755); err != nil {
 		return err
@@ -188,6 +206,21 @@ func (p *Poller) CheckAll(ctx context.Context) {
 			}
 			s.Paused = paused
 			p.mu.Lock()
+			restart := p.restart[n.Key]
+			p.mu.Unlock()
+			if restart && (s.State == "synced" || s.State == "syncing") && n.RPC.Call(cctx, "stop", nil, nil) == nil {
+				p.mu.Lock()
+				delete(p.restart, n.Key)
+				p.mu.Unlock()
+				s.State, s.Error = "starting", "restarting to apply its prune target"
+			}
+			if n.Prune != nil {
+				s.PruneOptions = n.Prune.Options
+				if v, err := readPrune(n.Prune.ConfFile); err == nil {
+					s.PruneSet = v
+				}
+			}
+			p.mu.Lock()
 			p.last[i] = s
 			p.mu.Unlock()
 		}(i, n)
@@ -206,6 +239,7 @@ type chainInfo struct {
 	Progress      float64 `json:"verificationprogress"`
 	Pruned        bool    `json:"pruned"`
 	SizeOnDisk    int64   `json:"size_on_disk"`
+	PruneTarget   int64   `json:"prune_target_size"` // bytes
 }
 
 // Check asks one node for its state.
@@ -224,6 +258,7 @@ func Check(ctx context.Context, n Node) Status {
 	}
 	s.Chain, s.Blocks, s.Headers, s.Difficulty = ci.Chain, ci.Blocks, ci.Headers, ci.Difficulty
 	s.Progress, s.Pruned, s.SizeOnDisk = ci.Progress, ci.Pruned, ci.SizeOnDisk
+	s.PruneRunning = int(ci.PruneTarget / (1 << 20))
 	var ni struct {
 		Subversion    string `json:"subversion"`
 		Connections   int    `json:"connections"`

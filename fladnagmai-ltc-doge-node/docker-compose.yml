@@ -12,7 +12,7 @@ services:
     # in the build).
     image: ghcr.io/fladnagmai/litecoin-node:0.21.5.8@sha256:0000000000000000000000000000000000000000000000000000000000000000
     user: "1000:1000"
-    restart: on-failure
+    restart: unless-stopped         # also comes back after the page restarts it (new prune target)
     stop_grace_period: 15m          # lets the node flush its database on shutdown
     environment:
       # For "docker exec ... sh -c 'litecoin-cli -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS ...'".
@@ -20,9 +20,9 @@ services:
       RPC_PASS: ${APP_LITECOIN_RPC_PASS}
     command:
       - -datadir=/data
+      - -conf=/conf/litecoin.conf          # prune target, set from the app page
       - -printtoconsole
       - -server
-      - -prune=2000
       - -txindex=0
       - -dbcache=300
       - -maxmempool=100
@@ -39,6 +39,7 @@ services:
       - -port=9333
     volumes:
       - ${APP_DATA_DIR}/litecoin:/data
+      - ${APP_DATA_DIR}/conf:/conf:ro
     networks:
       default:
         ipv4_address: ${APP_LITECOIN_NODE_IP}
@@ -48,7 +49,7 @@ services:
     # in the build).
     image: ghcr.io/fladnagmai/dogecoin-node:1.14.9@sha256:0000000000000000000000000000000000000000000000000000000000000000
     user: "1000:1000"
-    restart: on-failure
+    restart: unless-stopped         # also comes back after the page restarts it (new prune target)
     stop_grace_period: 15m          # lets the node flush its database on shutdown
     environment:
       # For "docker exec ... sh -c 'dogecoin-cli -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS ...'".
@@ -56,9 +57,9 @@ services:
       RPC_PASS: ${APP_DOGECOIN_RPC_PASS}
     command:
       - -datadir=/data
+      - -conf=/conf/dogecoin.conf          # prune target, set from the app page
       - -printtoconsole
       - -server
-      - -prune=2200
       - -txindex=0
       - -dbcache=200
       - -maxmempool=100
@@ -75,6 +76,7 @@ services:
       - -port=22556
     volumes:
       - ${APP_DATA_DIR}/dogecoin:/data
+      - ${APP_DATA_DIR}/conf:/conf:ro
     networks:
       default:
         ipv4_address: ${APP_DOGECOIN_NODE_IP}
@@ -93,6 +95,10 @@ services:
       # NS_STATE_FILE and re-applied after restarts.
       NS_PAUSABLE: doge
       NS_STATE_FILE: /data/state.json
+      # The nodes' -conf files: the page sets each prune target there and
+      # restarts that node to apply it.
+      LTC_CONF: /conf/litecoin.conf
+      DOGE_CONF: /conf/dogecoin.conf
       LTC_RPC_URL: http://${APP_LITECOIN_NODE_IP}:${APP_LITECOIN_RPC_PORT}
       LTC_RPC_USER: ${APP_LITECOIN_RPC_USER}
       LTC_RPC_PASS: ${APP_LITECOIN_RPC_PASS}
@@ -101,3 +107,4 @@ services:
       DOGE_RPC_PASS: ${APP_DOGECOIN_RPC_PASS}
     volumes:
       - ${APP_DATA_DIR}/status:/data
+      - ${APP_DATA_DIR}/conf:/conf

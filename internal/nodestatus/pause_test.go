@@ -20,7 +20,11 @@ type switchNode struct {
 	mu     sync.Mutex
 	active bool
 	calls  []bool
+	stops  int
+	prune  int64 // prune_target_size reported, bytes
 }
+
+func (sn *switchNode) stopCount() int { sn.mu.Lock(); defer sn.mu.Unlock(); return sn.stops }
 
 func (sn *switchNode) restart() { sn.mu.Lock(); sn.active = true; sn.mu.Unlock() }
 func (sn *switchNode) isActive() bool {
@@ -43,7 +47,7 @@ func newSwitchNode(t *testing.T) (*switchNode, *httptest.Server) {
 		var res any
 		switch req.Method {
 		case "getblockchaininfo":
-			res = map[string]any{"chain": "main", "blocks": 100, "headers": 5000, "bestblockhash": "ab", "verificationprogress": 0.02, "pruned": true}
+			res = map[string]any{"chain": "main", "blocks": 100, "headers": 5000, "bestblockhash": "ab", "verificationprogress": 0.02, "pruned": true, "prune_target_size": sn.prune}
 		case "getnetworkinfo":
 			peers := 8
 			if !sn.active {
@@ -54,6 +58,9 @@ func newSwitchNode(t *testing.T) (*switchNode, *httptest.Server) {
 			res = map[string]any{"size": 0, "bytes": 0}
 		case "getblockheader":
 			res = map[string]any{"time": 1}
+		case "stop":
+			sn.stops++
+			res = "Dogecoin server stopping"
 		case "setnetworkactive":
 			on, _ := req.Params[0].(bool)
 			sn.active = on

@@ -18,7 +18,8 @@ var webFS embed.FS
 
 // Handler serves the page (web/), GET /api/status (the latest statuses) and
 // POST /api/nodes/{key}/sync {"paused": bool} (pause or resume a pausable
-// node's sync). It never exposes RPC credentials (statuses carry none).
+// node's sync) and POST /api/nodes/{key}/prune {"mib": n} (set the prune
+// target and restart the node). It never exposes RPC credentials (statuses carry none).
 func Handler(p *Poller, version string) http.Handler {
 	sub, _ := fs.Sub(webFS, "web")
 	files := http.FileServer(http.FS(sub))
@@ -64,6 +65,42 @@ func Handler(p *Poller, version string) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]any{"paused": *body.Paused}
+		if err != nil {
+			resp["warning"] = err.Error()
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("POST /api/nodes/{key}/prune", func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			jsonErr(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		var body struct {
+			MiB *int `json:"mib"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil || body.MiB == nil {
+			jsonErr(w, http.StatusBadRequest, `body must be {"mib": <prune target>}`)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		err := p.SetPrune(ctx, r.PathValue("key"), *body.MiB)
+		switch {
+		case errors.Is(err, ErrUnknownNode):
+			jsonErr(w, http.StatusNotFound, err.Error())
+			return
+		case errors.Is(err, ErrNotPrunable):
+			jsonErr(w, http.StatusForbidden, err.Error())
+			return
+		case errors.Is(err, ErrBadPrune):
+			jsonErr(w, http.StatusBadRequest, err.Error())
+			return
+		case err != nil && strings.HasPrefix(err.Error(), "cannot save"):
+			jsonErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{"prune_mib": *body.MiB, "restarting": err == nil}
 		if err != nil {
 			resp["warning"] = err.Error()
 		}

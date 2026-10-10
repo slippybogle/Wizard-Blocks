@@ -4,10 +4,16 @@ pre {
   font: 14px/1.5 ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
-#controls { padding: 0 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+#controls { padding: 0 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 #controls button {
   background: #000; color: #ff69b4; border: 1px solid #ff69b4; border-radius: 3px;
   padding: 8px 14px; font: 14px ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace; cursor: pointer;
+}
+#controls .prune { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#controls label { font: 14px ui-monospace, Menlo, Consolas, monospace; }
+#controls select {
+  background: #000; color: #ff69b4; border: 1px solid #ff69b4; border-radius: 3px;
+  padding: 7px 8px; font: 14px ui-monospace, Menlo, Consolas, monospace;
 }
 #controls button:hover { background: rgba(255, 105, 180, 0.15); }
 #controls button:disabled { opacity: 0.5; cursor: wait; }
