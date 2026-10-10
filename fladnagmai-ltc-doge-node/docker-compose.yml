@@ -10,7 +10,7 @@ services:
   litecoind:
     # Built by nodes/litecoin/Dockerfile (release signature and checksum verified
     # in the build).
-    image: ghcr.io/fladnagmai/litecoin-node:0.21.5.8@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    image: ghcr.io/fladnagmai/litecoin-node:0.21.5.8@sha256:0d7f8f2e548d092c7ea101d834edb7ab981ab218202572b7915d119b41c5ff99
     depends_on:
       web:
         condition: service_healthy   # web writes this node's prune target first
@@ -50,7 +50,7 @@ services:
   dogecoind:
     # Built by nodes/dogecoin/Dockerfile (release signature and checksum verified
     # in the build).
-    image: ghcr.io/fladnagmai/dogecoin-node:1.14.9@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    image: ghcr.io/fladnagmai/dogecoin-node:1.14.9@sha256:55ca68103778ed1b6ae40f4ac46c252800c4dfffdda9252fd034aea95e2324cc
     depends_on:
       web:
         condition: service_healthy   # web writes this node's prune target first
@@ -90,7 +90,7 @@ services:
   web:
     # The app page: both nodes' live status (nodes/status/Dockerfile,
     # cmd/nodestatus, standard library only).
-    image: ghcr.io/fladnagmai/node-status:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    image: ghcr.io/fladnagmai/node-status:0.1.0@sha256:88ae9d8d127b4d72faf5abdd01c277047995bda7fe99fa904ea19a45a5f5f861
     user: "1000:1000"
     restart: on-failure
     healthcheck:
