@@ -133,7 +133,7 @@ func (e *Engine) ValidatePayout(ctx context.Context, addr string) (*stratum.Payo
 	}
 	v, err := e.rpc.ValidateAddress(ctx, nodeAddr)
 	if err != nil {
-		return nil, fmt.Errorf("cannot verify address %q with node: %w", addr, err)
+		return nil, fmt.Errorf("cannot verify address %q with node: %w", addr, nodeUnreachable{err})
 	}
 	if !v.IsValid {
 		return nil, fmt.Errorf("node rejects address %q as invalid", addr)

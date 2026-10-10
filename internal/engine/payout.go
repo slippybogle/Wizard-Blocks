@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fladnagmai/wizard-blocks/internal/stratum"
 )
@@ -20,6 +21,40 @@ import (
 // is ever issued without a verified payout script.
 
 var errNoPayout = errors.New("no payout address set yet: set it in the web UI (The Ledger, Settings)")
+
+// nodeUnreachable marks a payout check that failed because the node did not
+// answer (transport or RPC error), not because it judged the address.
+type nodeUnreachable struct{ err error }
+
+func (e nodeUnreachable) Error() string { return e.err.Error() }
+func (e nodeUnreachable) Unwrap() error { return e.err }
+
+// A saved address whose check fails only because the node did not answer is
+// retried this long at start; after that the engine exits so its restart
+// policy tries again, rather than running with no payout.
+var (
+	payoutRetryFor   = 2 * time.Minute
+	payoutRetryEvery = 2 * time.Second
+)
+
+// validateWithRetry checks addr, retrying while the node does not answer.
+func (e *Engine) validateWithRetry(ctx context.Context, addr string) (*stratum.Payout, error) {
+	deadline := time.Now().Add(payoutRetryFor)
+	for i := 0; ; i++ {
+		po, err := e.ValidatePayout(ctx, addr)
+		if err == nil || !errors.As(err, new(nodeUnreachable)) || time.Now().After(deadline) {
+			return po, err
+		}
+		if i%10 == 0 {
+			e.log.Warn("node did not answer the payout address check; retrying", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(payoutRetryEvery):
+		}
+	}
+}
 
 func (e *Engine) payoutPath() string {
 	if e.cfg.DataDir == "" {
@@ -47,7 +82,11 @@ func (e *Engine) initPayout(ctx context.Context) error {
 			err = json.Unmarshal(b, &saved)
 		}
 		if err == nil && saved.Address != "" {
-			if po, verr := e.ValidatePayout(ctx, saved.Address); verr == nil {
+			po, verr := e.validateWithRetry(ctx, saved.Address)
+			if errors.As(verr, new(nodeUnreachable)) {
+				return fmt.Errorf("saved payout address %q could not be checked with the node: %w", saved.Address, verr)
+			}
+			if verr == nil {
 				e.setFixed(po)
 				e.log.Info("payout address verified (saved from the UI)", "address", po.Address, "script", hex.EncodeToString(po.Script))
 				return nil
@@ -63,7 +102,7 @@ func (e *Engine) initPayout(ctx context.Context) error {
 		e.log.Warn("no payout address set: miners are refused until one is set in the web UI (The Ledger, Settings)")
 		return nil
 	}
-	po, err := e.ValidatePayout(ctx, e.cfg.Payout.Address)
+	po, err := e.validateWithRetry(ctx, e.cfg.Payout.Address)
 	if err != nil {
 		return fmt.Errorf("payout address: %w", err)
 	}
