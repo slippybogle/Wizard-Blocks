@@ -2,7 +2,7 @@ manifestVersion: 1
 id: fladnagmai-wizard-blocks-btc
 category: crypto
 name: Wizard-Blocks-BTC
-version: "0.1.7-alpha"
+version: "0.1.8-alpha"
 tagline: Solo-mine Bitcoin on your own node
 icon: https://raw.githubusercontent.com/fladnagmai/Wizard-Blocks/main/fladnagmai-wizard-blocks-btc/icon.svg
 description: >-
