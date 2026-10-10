@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -64,13 +67,62 @@ func TestRegtestMergedLTCDOGE(t *testing.T) {
 	cfg := engineConfig(l, "ltc")
 	cfg.Payout.Mode, cfg.Payout.Address = "fixed", ltcPayout
 	cfg.Doge.RPCURL, cfg.Doge.RPCUser, cfg.Doge.RPCPassword = d.RPCURL, rpcUser, rpcPass
-	cfg.Doge.ZMQHashBlock, cfg.Doge.PayoutAddress = d.ZMQ, dogePayout
+	cfg.Doge.ZMQHashBlock = d.ZMQ // no DOGE address yet: it is set from Settings below
 	cfg.Doge.PollIntervalMs, cfg.Doge.RefreshS = 500, 2
+	cfg.UI.SettingsOpen = true
 	cfg.DataDir = t.TempDir()
 	en := startEngine(t, cfg, "merged")
 	rec := &recorder{m: map[string]submission{}}
 	auxOn := func() bool { w := en.E.Manager().Current(); return w != nil && w.Aux != nil }
+	dogeView := func() map[string]any {
+		r, err := http.Get("http://" + en.E.UIAddr() + "/api/state")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		ch, _ := m["chains"].(map[string]any)
+		dv, _ := ch["doge"].(map[string]any)
+		return dv
+	}
+	reasonIs := func(want string) func() bool {
+		return func() bool { v := dogeView(); return v != nil && v["merged"] == false && v["reason"] == want }
+	}
+
+	// 0. No DOGE address: Litecoin only, the page says why, no tag.
+	waitFor(t, "banner reason: no address", 30*time.Second, reasonIs("no address"))
+	if auxOn() {
+		t.Fatal("aux work without a DOGE address")
+	}
+	noAddrFrom := len(en.E.Stats().Blocks())
+	mineLTC(t, en, l, rec, "rig-ltc-only", 2)
+	noAddrBlocks := en.E.Stats().Blocks()[noAddrFrom:]
+	// Set the DOGE address from Settings: checked by the Dogecoin node,
+	// refused if it is not a DOGE address, applied without a restart.
+	putDoge := func(addr string) (int, string) {
+		body, _ := json.Marshal(map[string]string{"address": addr})
+		req, _ := http.NewRequest(http.MethodPut, "http://"+en.E.UIAddr()+"/api/admin/doge-payout", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://"+en.E.UIAddr())
+		req.Header.Set("X-WB-Admin", "1")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	if code, body := putDoge(ltcPayout); code != http.StatusBadRequest {
+		t.Fatalf("an LTC address accepted as DOGE payout: %d %s", code, body)
+	}
+	if code, body := putDoge(dogePayout); code != http.StatusOK {
+		t.Fatalf("set DOGE payout: %d %s", code, body)
+	}
 	waitFor(t, "Dogecoin aux work", 30*time.Second, auxOn)
+	waitFor(t, "banner gone", 30*time.Second, func() bool { v := dogeView(); return v != nil && v["merged"] == true })
+	t.Log("DOGE payout set from Settings: merged mining on, banner gone")
 
 	// 1. Merged mining: LTC regtest and DOGE regtest share the same easy
 	// target, so each solving share is a block on both chains.
@@ -117,12 +169,15 @@ func TestRegtestMergedLTCDOGE(t *testing.T) {
 	// mining resumes when the node is back.
 	docker(t, "stop", "-t", "5", d.Name)
 	waitFor(t, "aux work dropped", 30*time.Second, func() bool { return !auxOn() })
+	waitFor(t, "banner reason: node down", 30*time.Second, reasonIs("node down"))
 	downFrom := len(en.E.Stats().Blocks())
 	mineLTC(t, en, l, rec, "rig-solo", 3)
 	soloBlocks := en.E.Stats().Blocks()[downFrom:]
 	// An engine started while the Dogecoin node is down still starts, and
 	// mines Litecoin alone.
 	cfgDown := cfg
+	cfgDown.Doge.PayoutAddress = dogePayout
+	cfgDown.UI.SettingsOpen = false
 	cfgDown.DataDir = t.TempDir()
 	cfgDown.Stratum.Listen, cfgDown.API.Listen, cfgDown.UI.Listen = "127.0.0.1:0", "127.0.0.1:0", "127.0.0.1:0"
 	enDown := startEngine(t, cfgDown, "merged-doge-down")
@@ -133,6 +188,7 @@ func TestRegtestMergedLTCDOGE(t *testing.T) {
 	docker(t, "start", d.Name)
 	waitFor(t, "Dogecoin RPC back", 60*time.Second, func() bool { _, err := d.RPC.GetBlockchainInfo(ctx); return err == nil })
 	waitFor(t, "aux work back", 60*time.Second, auxOn)
+	waitFor(t, "banner gone again", 30*time.Second, func() bool { v := dogeView(); return v != nil && v["merged"] == true })
 	dogeBefore := len(auxBlocks(en, "accepted"))
 	mineLTC(t, en, l, rec, "rig-mm3", 3)
 	waitFor(t, "DOGE blocks after restart", 60*time.Second, func() bool {
@@ -154,7 +210,7 @@ func TestRegtestMergedLTCDOGE(t *testing.T) {
 		}
 		ltcAccepted[b.Hash] = true
 	}
-	for _, b := range soloBlocks {
+	for _, b := range append(append([]stats.BlockRecord{}, soloBlocks...), noAddrBlocks...) {
 		var raw string
 		l.call(t, l.RPC, "getblock", &raw, b.Hash, 0)
 		rb, _ := hex.DecodeString(raw)
@@ -216,6 +272,11 @@ func TestRegtestMergedLTCDOGE(t *testing.T) {
 		}
 	}
 	nd := len(auxBlocks(en, "accepted"))
+	// The page's per-chain counts match the two chains.
+	st := dogeView()
+	if int(st["blocks_found"].(float64)) != nd {
+		t.Fatalf("page DOGE blocks_found %v, nodes have %d", st["blocks_found"], nd)
+	}
 	blocksVerified.Add(int64(len(ltcAccepted) + nd))
 	t.Logf("merged: VERIFIED %d LTC blocks and %d DOGE blocks; %d shares were blocks on both chains; %d LTC blocks mined while Dogecoin was down",
 		len(ltcAccepted), nd, both, len(soloBlocks))
@@ -226,6 +287,7 @@ func TestRegtestMergedLTCDOGE(t *testing.T) {
 	// 4. No DOGE address: Litecoin only.
 	cfg2 := cfg
 	cfg2.Doge.PayoutAddress = ""
+	cfg2.UI.SettingsOpen = false
 	cfg2.DataDir = t.TempDir()
 	en2 := startEngine(t, cfg2, "ltc-only")
 	if w := en2.E.Manager().Current(); w.Aux != nil {

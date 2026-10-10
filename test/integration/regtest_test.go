@@ -1149,6 +1149,26 @@ func testLiveDifficulty(t *testing.T, en *Engine, dataDir string) {
 	if err != nil {
 		t.Fatalf("difficulty change was not followed by a fresh job: %v", err)
 	}
+	// Rental rigs: one "rentx.*" rule covers rigs with changing names, and
+	// with the d= switch off a miner's own d= no longer pins its difficulty.
+	r1, r2 := dial("rentx.rig1", "x"), dial("rentx.rig77", "x")
+	settings["worker_overrides"] = map[string]float64{"live1": 3e-10, "rentx.*": 2.2e-10}
+	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
+		t.Fatalf("PUT rental override: %d", code)
+	}
+	diffIs(r1, 2.2e-10, "rentx.* override on rig1")
+	diffIs(r2, 2.2e-10, "rentx.* override on rig77")
+	settings["ignore_password_diff"] = true
+	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
+		t.Fatalf("PUT ignore d=: %d", code)
+	}
+	diffIs(b, 1e-10, "d= ignored with the switch off (fixed difficulty applies)")
+	settings["ignore_password_diff"] = false
+	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
+		t.Fatalf("PUT honour d=: %d", code)
+	}
+	diffIs(b, 2e-10, "d= honoured again")
+	settings["worker_overrides"] = map[string]float64{"live1": 3e-10}
 	// Overrides are clamped to min/max.
 	settings["vardiff_max"] = 2.5e-10
 	settings["fixed_diff"] = 2e-10
