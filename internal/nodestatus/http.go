@@ -30,14 +30,9 @@ func Handler(p *Poller, version string) http.Handler {
 			Nodes   []Status `json:"nodes"`
 		}{version, time.Now().Unix(), p.Snapshot()})
 	})
-	etag := `"ns-` + version + `"`
+	// no-store: a rebuilt image (same version) always serves its own page.
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") == etag {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store")
 		files.ServeHTTP(w, r)
 	}))
 	return secure(mux)

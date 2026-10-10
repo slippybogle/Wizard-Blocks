@@ -30,8 +30,8 @@ type Status struct {
 	Blocks       int64   `json:"blocks"`
 	Headers      int64   `json:"headers"`
 	Progress     float64 `json:"progress"` // verificationprogress, 0..1
-	Peers        int     `json:"peers"`
-	MempoolTx    int64   `json:"mempool_tx"`
+	Peers        *int    `json:"peers,omitempty"`      // nil: getnetworkinfo failed
+	MempoolTx    *int64  `json:"mempool_tx,omitempty"` // nil: getmempoolinfo failed
 	MempoolBytes int64   `json:"mempool_bytes"`
 	TipTime      int64   `json:"tip_time,omitempty"` // unix time of the best block
 	Difficulty   float64 `json:"difficulty"`
@@ -132,14 +132,14 @@ func Check(ctx context.Context, n Node) Status {
 		Connections int    `json:"connections"`
 	}
 	if n.RPC.Call(ctx, "getnetworkinfo", nil, &ni) == nil {
-		s.Version, s.Peers = ni.Subversion, ni.Connections
+		s.Version, s.Peers = ni.Subversion, &ni.Connections
 	}
 	var mi struct {
 		Size  int64 `json:"size"`
 		Bytes int64 `json:"bytes"`
 	}
 	if n.RPC.Call(ctx, "getmempoolinfo", nil, &mi) == nil {
-		s.MempoolTx, s.MempoolBytes = mi.Size, mi.Bytes
+		s.MempoolTx, s.MempoolBytes = &mi.Size, mi.Bytes
 	}
 	if ci.BestBlockHash != "" {
 		var h struct {

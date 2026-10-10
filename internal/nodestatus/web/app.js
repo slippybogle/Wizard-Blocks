@@ -45,8 +45,8 @@ function render(st) {
     if (n.state === 'synced' || n.state === 'syncing') {
       lines.push(`  height       ${int(n.blocks)} / ${int(n.headers)} headers`);
       lines.push(`  last block   ${n.tip_time ? ago(st.now - n.tip_time) : '-'}`);
-      lines.push(`  peers        ${int(n.peers)}`);
-      lines.push(`  mempool      ${int(n.mempool_tx)} tx (${bytes(n.mempool_bytes)})`);
+      lines.push(`  peers        ${n.peers === undefined ? '-' : int(n.peers)}`);
+      lines.push(`  mempool      ${n.mempool_tx === undefined ? '-' : `${int(n.mempool_tx)} tx (${bytes(n.mempool_bytes)})`}`);
       lines.push(`  difficulty   ${si(n.difficulty)}`);
       lines.push(`  disk         ${n.size_on_disk ? bytes(n.size_on_disk) : '-'}${n.pruned ? ' (pruned)' : ''}`);
       if (n.chain && n.chain !== 'main') lines.push(`  chain        ${n.chain}`);

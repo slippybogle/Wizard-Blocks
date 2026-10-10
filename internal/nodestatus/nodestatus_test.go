@@ -58,7 +58,7 @@ func ltcResults(blocks, headers int64, progress float64) map[string]any {
 func TestCheckSyncedLitecoin(t *testing.T) {
 	srv := fakeNode(t, "umbrel", "pw", ltcResults(2961234, 2961234, 0.99999931), nil)
 	s := Check(context.Background(), Node{Name: "Litecoin Node", RPC: node.NewClient(srv.URL, "umbrel", "pw", "", time.Second)})
-	if s.State != "synced" || s.Blocks != 2961234 || s.Peers != 12 || s.MempoolTx != 1234 || s.MempoolBytes != 2_100_000 ||
+	if s.State != "synced" || s.Blocks != 2961234 || s.Peers == nil || *s.Peers != 12 || s.MempoolTx == nil || *s.MempoolTx != 1234 || s.MempoolBytes != 2_100_000 ||
 		s.TipTime != 1_791_620_000 || !s.Pruned || s.SizeOnDisk != 4_200_000_000 || s.Version != "/LitecoinCore:0.21.5.8/" || s.Chain != "main" || s.Error != "" {
 		t.Fatalf("%+v", s)
 	}
@@ -93,8 +93,24 @@ func TestCheckDogecoinOldFields(t *testing.T) {
 	}
 	srv := fakeNode(t, "u", "p", res, nil)
 	s := Check(context.Background(), Node{Name: "Dogecoin Node", RPC: node.NewClient(srv.URL, "u", "p", "", time.Second)})
-	if s.State != "synced" || s.SizeOnDisk != 0 || s.Version != "/Shibetoshi:1.14.9/" || s.Peers != 8 {
+	if s.State != "synced" || s.SizeOnDisk != 0 || s.Version != "/Shibetoshi:1.14.9/" || s.Peers == nil || *s.Peers != 8 {
 		t.Fatalf("%+v", s)
+	}
+}
+
+// A failed peers or mempool read shows as unknown, not as 0.
+func TestCheckUnknownFields(t *testing.T) {
+	res := ltcResults(10, 10, 1)
+	delete(res, "getnetworkinfo")
+	delete(res, "getmempoolinfo")
+	srv := fakeNode(t, "u", "p", res, nil)
+	s := Check(context.Background(), Node{Name: "x", RPC: node.NewClient(srv.URL, "u", "p", "", time.Second)})
+	if s.State != "synced" || s.Peers != nil || s.MempoolTx != nil {
+		t.Fatalf("%+v", s)
+	}
+	b, _ := json.Marshal(s)
+	if strings.Contains(string(b), `"peers"`) || strings.Contains(string(b), `"mempool_tx"`) {
+		t.Fatalf("unknown fields serialised: %s", b)
 	}
 }
 
@@ -163,7 +179,7 @@ func TestHandler(t *testing.T) {
 		return r, string(b)
 	}
 	r, body := get("/api/status")
-	if r.StatusCode != 200 || r.Header.Get("Content-Security-Policy") == "" || strings.Contains(body, "secretpw") {
+	if r.StatusCode != 200 || r.Header.Get("Content-Security-Policy") == "" || strings.Contains(body, "secretpw") || r.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("/api/status: %d %q", r.StatusCode, body)
 	}
 	var st struct {
@@ -176,7 +192,10 @@ func TestHandler(t *testing.T) {
 	if r, _ := http.Post(srv.URL+"/api/status", "text/plain", nil); r.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /api/status: %d", r.StatusCode)
 	}
-	_, page := get("/")
+	pr, page := get("/")
+	if pr.Header.Get("Cache-Control") != "no-store" || pr.Header.Get("ETag") != "" {
+		t.Fatalf("page caching: %v", pr.Header)
+	}
 	if !strings.Contains(page, `<pre id="out">`) || strings.Contains(page, "<style") || strings.Contains(page, "<script>") {
 		t.Fatalf("page: %s", page)
 	}
