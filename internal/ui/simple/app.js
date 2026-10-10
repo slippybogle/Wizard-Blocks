@@ -52,7 +52,7 @@ function render(st) {
   set('n-zmq', !n.zmq_enabled ? 'off (polling)' : n.zmq_connected ? 'connected' : 'not connected', n.zmq_enabled && !n.zmq_connected);
   set('n-chain', n.chain || st.chain || '—');
 
-  set('p-hr1', fmtHash(p.hashrate_60s));
+  set('p-hr1', fmtHash(p.hashrate_live));
   set('p-hr5', fmtHash(p.hashrate_5m));
   set('p-hr60', fmtHash(p.hashrate_1h));
   set('p-workers', `${p.workers_online ?? 0} online / ${(st.workers || []).length}`);
@@ -72,10 +72,10 @@ function render(st) {
   else if ($('s-msg').textContent.startsWith('No payout')) set('s-msg', '');
   if (document.activeElement !== $('s-addr') && !$('s-addr').dataset.dirty) $('s-addr').value = sx.payout_address || '';
 
-  const workers = (st.workers || []).slice().sort((a, b) => (b.hashrate_60s || 0) - (a.hashrate_60s || 0));
+  const workers = (st.workers || []).slice().sort((a, b) => (b.hashrate_live || 0) - (a.hashrate_live || 0));
   $('workers').innerHTML = workers.length ? workers.map((w) => `<tr>
     <td>${esc(w.name)}${w.connections > 0 ? '' : ' <span class="dim">(offline)</span>'}</td>
-    <td class="num">${esc(fmtHash(w.hashrate_60s))}</td>
+    <td class="num">${esc(fmtHash(w.hashrate_live))}</td>
     <td class="num">${esc(fmtDiff(w.difficulty))}</td>
     <td class="num">${esc(fmtInt(w.shares_accepted))} / ${esc(fmtInt(w.shares_rejected))}</td>
     <td class="num">${esc(fmtDiff(w.best_share_difficulty))}</td>
