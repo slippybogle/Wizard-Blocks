@@ -10,7 +10,7 @@ services:
 
   engine:
     # Multi-arch (amd64 + arm64) image built by .github/workflows/image.yml.
-    image: ghcr.io/fladnagmai/wizard-blocks:0.1.4-alpha@sha256:7ce057e6ba45f7b9cf08803955457d3f28738d4042c0d62a4ce48b573018ceb1
+    image: ghcr.io/fladnagmai/wizard-blocks:0.1.6-alpha@sha256:27888e7ddfa965ba4b01aaa16c4c5e6812e4950714c32dd83e185225a589a3f9
     user: "1000:1000"
     restart: on-failure
     stop_grace_period: 90s          # lets an in-flight block submission finish
