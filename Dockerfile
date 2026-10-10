@@ -1,10 +1,11 @@
 FROM --platform=$BUILDPLATFORM golang:1.24.7-bookworm@sha256:b8bae5bd9ba9b1f89b635c91c24cc75cea335a16fb5076310f38566fc674b1ec AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 ARG VERSION=dev
-# Static binary: no cgo, standard library only.
+# Static binary: no cgo; one dependency (golang.org/x/crypto, for scrypt).
 ARG TARGETOS TARGETARCH
 RUN mkdir -p /out/data && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/wizard-blocks ./cmd/wizard-blocks
 

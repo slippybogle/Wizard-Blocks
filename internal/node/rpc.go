@@ -213,6 +213,8 @@ type BlockTemplate struct {
 	Height                   int64        `json:"height"`
 	DefaultWitnessCommitment string       `json:"default_witness_commitment"`
 	LongPollID               string       `json:"longpollid"`
+	// MWEB is Litecoin's MWEB block, hex (absent when the block has none).
+	MWEB string `json:"mweb"`
 }
 
 // GetBlockTemplate calls getblocktemplate with the given rules.

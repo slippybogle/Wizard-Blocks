@@ -19,12 +19,12 @@ func TestHashrateWindow(t *testing.T) {
 		now = now.Add(time.Duration(interval * float64(time.Second)))
 	}
 	for _, w := range []time.Duration{5 * time.Minute, time.Hour} {
-		if hr := r.hashrate(now, w); math.Abs(hr/1e12-1) > 0.05 {
+		if hr := r.hashrate(now, w, 4294967296); math.Abs(hr/1e12-1) > 0.05 {
 			t.Errorf("window %v: %g H/s", w, hr)
 		}
 	}
 	// Nothing in the last hour after a long pause.
-	if hr := r.hashrate(now.Add(3*time.Hour), time.Hour); hr != 0 {
+	if hr := r.hashrate(now.Add(3*time.Hour), time.Hour, 4294967296); hr != 0 {
 		t.Errorf("stale buckets counted: %g", hr)
 	}
 }

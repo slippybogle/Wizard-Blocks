@@ -1,6 +1,8 @@
 // Package address decodes payout addresses into scriptPubKeys for BTC
-// (Base58Check P2PKH/P2SH, BIP173 bech32 segwit v0, BIP350 bech32m taproot)
-// and BCH (CashAddr incl. P2SH32 and token-aware types, legacy Base58Check).
+// (Base58Check P2PKH/P2SH, BIP173 bech32 segwit v0, BIP350 bech32m taproot),
+// BCH (CashAddr incl. P2SH32 and token-aware types, legacy Base58Check),
+// LTC (Base58Check with both P2SH versions, bech32/bech32m; MWEB addresses
+// are refused: a coinbase cannot pay them) and DOGE (Base58Check only).
 //
 // The engine never trusts this decoding alone: at startup and on every
 // authorize it is cross-checked against the node's validateaddress
@@ -18,8 +20,10 @@ import (
 type Coin string
 
 const (
-	BTC Coin = "btc"
-	BCH Coin = "bch"
+	BTC  Coin = "btc"
+	BCH  Coin = "bch"
+	LTC  Coin = "ltc"
+	DOGE Coin = "doge"
 )
 
 // Network holds address encoding parameters for one coin + chain.
@@ -28,8 +32,12 @@ type Network struct {
 	Chain      string // as reported by getblockchaininfo
 	PubKeyHash byte
 	ScriptHash byte
-	Bech32HRP  string // BTC only
-	CashPrefix string // BCH only
+	// ScriptHash2 is a second accepted P2SH version (LTC: the legacy "3…"
+	// prefix 0x05 next to "M…"); 0 = none.
+	ScriptHash2 byte
+	Bech32HRP   string // BTC, LTC
+	MWEBHRP     string // LTC: MWEB address prefix (refused as payout)
+	CashPrefix  string // BCH only
 }
 
 // NetworkFor maps a coin and a getblockchaininfo "chain" value to address
@@ -59,6 +67,28 @@ func NetworkFor(coin Coin, chain string) (*Network, error) {
 		default:
 			return nil, fmt.Errorf("unknown BCH chain %q", chain)
 		}
+	case LTC:
+		switch chain {
+		case "main":
+			n.PubKeyHash, n.ScriptHash, n.ScriptHash2, n.Bech32HRP, n.MWEBHRP = 0x30, 0x32, 0x05, "ltc", "ltcmweb"
+		case "test":
+			n.PubKeyHash, n.ScriptHash, n.ScriptHash2, n.Bech32HRP, n.MWEBHRP = 0x6f, 0x3a, 0xc4, "tltc", "tmweb"
+		case "regtest":
+			n.PubKeyHash, n.ScriptHash, n.ScriptHash2, n.Bech32HRP, n.MWEBHRP = 0x6f, 0x3a, 0xc4, "rltc", "tmweb"
+		default:
+			return nil, fmt.Errorf("unknown LTC chain %q", chain)
+		}
+	case DOGE:
+		switch chain {
+		case "main":
+			n.PubKeyHash, n.ScriptHash = 0x1e, 0x16
+		case "test":
+			n.PubKeyHash, n.ScriptHash = 0x71, 0xc4
+		case "regtest":
+			n.PubKeyHash, n.ScriptHash = 0x6f, 0xc4
+		default:
+			return nil, fmt.Errorf("unknown DOGE chain %q", chain)
+		}
 	default:
 		return nil, fmt.Errorf("unknown coin %q", coin)
 	}
@@ -81,6 +111,9 @@ func Decode(n *Network, s string) (*Address, error) {
 	if s == "" {
 		return nil, errors.New("empty address")
 	}
+	if n.MWEBHRP != "" && strings.HasPrefix(strings.ToLower(s), n.MWEBHRP+"1") {
+		return nil, errors.New("MWEB addresses cannot receive a block reward: use an ltc1… (or L…/M…) address")
+	}
 	if len(s) > 120 {
 		return nil, errors.New("address too long")
 	}
@@ -92,6 +125,16 @@ func Decode(n *Network, s string) (*Address, error) {
 				return decodeSegwit(n, s) // reports a wrong-network prefix clearly
 			}
 		}
+		return decodeBase58(n, s)
+	case LTC:
+		lower := strings.ToLower(s)
+		for _, hrp := range []string{n.Bech32HRP, "ltc", "tltc", "rltc"} {
+			if strings.HasPrefix(lower, hrp+"1") {
+				return decodeSegwit(n, s)
+			}
+		}
+		return decodeBase58(n, s)
+	case DOGE:
 		return decodeBase58(n, s)
 	case BCH:
 		if a, err := decodeCashAddr(n, s); err == nil {
@@ -145,12 +188,12 @@ func decodeBase58(n *Network, s string) (*Address, error) {
 	switch {
 	case ver == n.PubKeyHash && len(h) == 20:
 		return &Address{String: s, Type: "p2pkh", Script: p2pkh(h)}, nil
-	case ver == n.ScriptHash && len(h) == 20:
+	case (ver == n.ScriptHash || (n.ScriptHash2 != 0 && ver == n.ScriptHash2)) && len(h) == 20:
 		return &Address{String: s, Type: "p2sh", Script: p2sh(h)}, nil
 	case n.Coin == BCH && ver == n.ScriptHash && len(h) == 32:
 		return &Address{String: s, Type: "p2sh32", Script: p2sh32(h)}, nil
 	}
-	if ver != n.PubKeyHash && ver != n.ScriptHash {
+	if ver != n.PubKeyHash && ver != n.ScriptHash && (n.ScriptHash2 == 0 || ver != n.ScriptHash2) {
 		return nil, fmt.Errorf("base58 version byte 0x%02x is not valid for %s %s", ver, n.Coin, n.Chain)
 	}
 	return nil, fmt.Errorf("base58 payload length %d invalid", len(h))

@@ -540,7 +540,10 @@ func (c *Session) maybeStart() {
 // every block-solving hash is also a valid share the miner will submit.
 func effectiveDiff(d float64, w *work.Work) float64 {
 	if nd := w.Tmpl.NetworkDiff; nd > 0 && d > nd {
-		return nd
+		d = nd
+	}
+	if w.Aux != nil && w.Aux.MinDiff > 0 && d > w.Aux.MinDiff {
+		d = w.Aux.MinDiff
 	}
 	return d
 }
@@ -734,23 +737,33 @@ func (c *Session) handleSubmit(req request) {
 	}
 
 	required := math.Min(sj.diff, curDiff)
-	shareTarget := bitcoin.TargetFromDifficulty(required)
+	algo := c.srv.mgr.PoW()
+	shareTarget := algo.ShareTarget(required)
+	powHash := func(h bitcoin.Header) bitcoin.Hash { b := h.Serialize(); return algo.PoWHash(b[:]) }
 
 	// Evaluate every admissible interpretation and keep the lowest hash. On
 	// mainnet at most one can meet a real target (and they coincide unless the
 	// template signals inside the mask); on test chains with trivial targets
 	// this picks the header the miner actually worked on.
 	hdr := job.Header(c.en1Bytes, en2, ntime, nonce, cands[0].version)
-	hash := hdr.Hash()
+	hash := powHash(hdr) // the work hash (SHA-256d, or Scrypt for LTC); the block's id stays SHA-256d
 	interp := cands[0].interp
 	for _, vc := range cands[1:] {
 		h := job.Header(c.en1Bytes, en2, ntime, nonce, vc.version)
-		if hh := h.Hash(); bitcoin.HashToBig(hh).Cmp(bitcoin.HashToBig(hash)) < 0 {
+		if hh := powHash(h); bitcoin.HashToBig(hh).Cmp(bitcoin.HashToBig(hash)) < 0 {
 			hdr, hash, interp = h, hh, vc.interp
 		}
 	}
-	achieved := bitcoin.HashDifficulty(hash)
+	achieved := algo.HashDifficulty(hash)
 	stale := job.Gen < c.srv.mgr.CurrentGen()
+
+	// Merged mining: the same header may solve an aux block (Dogecoin),
+	// whatever it means for the parent; the aux node judges whether its
+	// block is still current.
+	if job.Aux != nil {
+		c.srv.mgr.SubmitAux(work.Candidate{Job: job, Header: hdr, En1: c.en1Bytes, En2: en2,
+			Worker: worker, ShareDiff: achieved, Stale: stale, VersionInterp: interp}, hash)
+	}
 
 	// Block check first and independently of the share target: a solved
 	// block is submitted immediately, before any bookkeeping.

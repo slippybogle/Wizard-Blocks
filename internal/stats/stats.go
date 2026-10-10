@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/fladnagmai/wizard-blocks/internal/pow"
 )
 
 const (
@@ -37,8 +39,9 @@ func (r *rateWindow) add(now time.Time, diff float64) {
 	r.buckets[i] += diff
 }
 
-// hashrate returns H/s over the trailing window: Σdiff · 2^32 / seconds.
-func (r *rateWindow) hashrate(now time.Time, window time.Duration) float64 {
+// hashrate returns H/s over the trailing window: Σdiff · diff1Hashes / seconds
+// (diff1Hashes: 2^32 for SHA-256d, 2^16 for Scrypt shares).
+func (r *rateWindow) hashrate(now time.Time, window time.Duration, diff1Hashes float64) float64 {
 	if r.first.IsZero() {
 		return 0
 	}
@@ -60,7 +63,7 @@ func (r *rateWindow) hashrate(now time.Time, window time.Duration) float64 {
 	if age := now.Sub(r.first).Seconds(); age < secs {
 		secs = math.Max(age, 30)
 	}
-	return sum * 4294967296 / secs
+	return sum * diff1Hashes / secs
 }
 
 // Worker statistics, keyed by the full username.
@@ -104,6 +107,11 @@ type BlockRecord struct {
 	// accepted. The UI offers to mount that creature's head.
 	BestDropPct    float64 `json:"best_drop_pct,omitempty"`
 	BestDropHeight int64   `json:"best_drop_height,omitempty"`
+	// Chain is set on merged-mined aux blocks ("doge"); empty for the
+	// parent chain. ParentHash is the parent block whose header carried the
+	// proof of work (a parent share, not necessarily a parent block).
+	Chain      string `json:"chain,omitempty"`
+	ParentHash string `json:"parent_hash,omitempty"`
 }
 
 // NodeStatus describes the full node connection.
@@ -149,10 +157,12 @@ type Collector struct {
 	accepted    uint64
 	rejected    uint64
 	rejects     map[string]uint64
-	badMessages uint64 // non-JSON lines on the Stratum port
+	badMessages uint64  // non-JSON lines on the Stratum port
+	diff1Hashes float64 // hashes per share at difficulty 1 (pow.Algo.Diff1Hashes)
 	bestDiff    float64
 	bestWorker  string
 	blocks      []BlockRecord
+	auxBlocks   []BlockRecord // merged-mined aux chain blocks (Dogecoin)
 	connections int
 	persistPath string
 	luck        Luck
@@ -182,7 +192,7 @@ const maxRounds = 500
 // best share are persisted there across restarts.
 func New(coin, version, dataDir string) *Collector {
 	c := &Collector{
-		start: time.Now(), coin: coin, version: version,
+		start: time.Now(), coin: coin, version: version, diff1Hashes: pow.For(coin).Diff1Hashes,
 		workers: map[string]*Worker{}, rejects: map[string]uint64{},
 	}
 	if dataDir != "" {
@@ -194,6 +204,7 @@ func New(coin, version, dataDir string) *Collector {
 
 type persisted struct {
 	Blocks     []BlockRecord `json:"blocks"`
+	AuxBlocks  []BlockRecord `json:"aux_blocks,omitempty"`
 	BestDiff   float64       `json:"best_share_difficulty"`
 	BestWorker string        `json:"best_share_worker"`
 	Luck       Luck          `json:"luck"`
@@ -223,7 +234,7 @@ func (c *Collector) load() {
 	}
 	var p persisted
 	if json.Unmarshal(b, &p) == nil {
-		c.blocks, c.bestDiff, c.bestWorker, c.luck = p.Blocks, p.BestDiff, p.BestWorker, p.Luck
+		c.blocks, c.auxBlocks, c.bestDiff, c.bestWorker, c.luck = p.Blocks, p.AuxBlocks, p.BestDiff, p.BestWorker, p.Luck
 	}
 }
 
@@ -233,7 +244,7 @@ func (c *Collector) Save() error {
 		return nil
 	}
 	c.mu.Lock()
-	b, err := json.MarshalIndent(persisted{Blocks: c.blocks, BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck}, "", "  ")
+	b, err := json.MarshalIndent(persisted{Blocks: c.blocks, AuxBlocks: c.auxBlocks, BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck}, "", "  ")
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -469,6 +480,35 @@ func (c *Collector) Prune(maxIdle time.Duration) {
 	}
 }
 
+// AuxBlockSubmitted records or updates (by chain and hash) a merged-mined
+// aux block. Aux blocks never touch the parent chain's luck or counts.
+func (c *Collector) AuxBlockSubmitted(r BlockRecord) {
+	c.mu.Lock()
+	found := false
+	for i := range c.auxBlocks {
+		if c.auxBlocks[i].Hash == r.Hash && c.auxBlocks[i].Chain == r.Chain {
+			c.auxBlocks[i] = r
+			found = true
+			break
+		}
+	}
+	if !found {
+		c.auxBlocks = append(c.auxBlocks, r)
+		if len(c.auxBlocks) > 10000 {
+			c.auxBlocks = c.auxBlocks[len(c.auxBlocks)-10000:]
+		}
+	}
+	c.mu.Unlock()
+	_ = c.Save()
+}
+
+// AuxBlocks returns a copy of the aux block records.
+func (c *Collector) AuxBlocks() []BlockRecord {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]BlockRecord(nil), c.auxBlocks...)
+}
+
 // Blocks returns a copy of the block records.
 func (c *Collector) Blocks() []BlockRecord {
 	c.mu.Lock()
@@ -533,6 +573,8 @@ type Snapshot struct {
 	Pool     PoolSnapshot     `json:"pool"`
 	Workers  []WorkerSnapshot `json:"workers"`
 	Blocks   []BlockRecord    `json:"blocks"`
+	// AuxBlocks are merged-mined aux chain blocks (Dogecoin), newest last.
+	AuxBlocks []BlockRecord `json:"aux_blocks,omitempty"`
 }
 
 // Snapshot returns a consistent copy of all statistics.
@@ -544,14 +586,15 @@ func (c *Collector) Snapshot() Snapshot {
 		Coin: c.coin, Version: c.version, Uptime: now.Sub(c.start).Seconds(),
 		Node: c.node, Template: c.tmpl,
 		Pool: PoolSnapshot{
-			Hashrate1m:  c.pool.hashrate(now, time.Minute),
-			Hashrate5m:  c.pool.hashrate(now, 5*time.Minute),
-			Hashrate1h:  c.pool.hashrate(now, time.Hour),
+			Hashrate1m:  c.pool.hashrate(now, time.Minute, c.diff1Hashes),
+			Hashrate5m:  c.pool.hashrate(now, 5*time.Minute, c.diff1Hashes),
+			Hashrate1h:  c.pool.hashrate(now, time.Hour, c.diff1Hashes),
 			Connections: c.connections, Accepted: c.accepted, Rejected: c.rejected,
 			Rejects: copyMap(c.rejects), BadMessages: c.badMessages, BestDiff: c.bestDiff, BestWorker: c.bestWorker, Luck: c.luck,
 			RecentShares: append([]RecentShare{}, c.recent...),
 		},
-		Blocks: append([]BlockRecord{}, c.blocks...),
+		Blocks:    append([]BlockRecord{}, c.blocks...),
+		AuxBlocks: append([]BlockRecord(nil), c.auxBlocks...),
 	}
 	for _, b := range c.blocks {
 		switch b.Status {
@@ -564,9 +607,9 @@ func (c *Collector) Snapshot() Snapshot {
 	for _, w := range c.workers {
 		ws := WorkerSnapshot{
 			Name: w.Name, Connections: w.Connections,
-			Hashrate1m: w.rate.hashrate(now, time.Minute),
-			Hashrate5m: w.rate.hashrate(now, 5*time.Minute),
-			Hashrate1h: w.rate.hashrate(now, time.Hour),
+			Hashrate1m: w.rate.hashrate(now, time.Minute, c.diff1Hashes),
+			Hashrate5m: w.rate.hashrate(now, 5*time.Minute, c.diff1Hashes),
+			Hashrate1h: w.rate.hashrate(now, time.Hour, c.diff1Hashes),
 			Accepted:   w.Accepted, Rejected: w.Rejected, Rejects: copyMap(w.Rejects),
 			BestDiff: w.BestDiff, Difficulty: w.Difficulty, Race: w.Race,
 		}

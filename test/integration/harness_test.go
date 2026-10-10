@@ -10,6 +10,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,9 +33,50 @@ import (
 const (
 	btcImage = "bitcoin/bitcoin:28.1"
 	bchImage = "zquestz/bitcoin-cash-node:latest"
-	rpcUser  = "wbtest"
-	rpcPass  = "wbtestpass"
+	// Litecoin Core is built locally from the official release (see
+	// litecoind/Dockerfile and ensureLitecoinImage).
+	ltcVersion = "0.21.5.8"
+	ltcSHA256  = "43200c9f9d65ebc126ea5833ca9429e144c4b3273da6bb9f4e89fd7450ab1be9" // SHA256SUMS.asc, signed by D35621D53A1CC6A3456758D03620E9D387E55666
+	ltcImage   = "wbit-litecoind:" + ltcVersion
+	// Dogecoin Core, likewise (dogecoind/Dockerfile).
+	dogeVersion = "1.14.9"
+	dogeSHA256  = "4f227117b411a7c98622c970986e27bcfc3f547a72bef65e7d9e82989175d4f8" // SHA256SUMS.asc, signed by DC6EF4A8BF9F1B1E4DE1EE522D3A345B98D0DC1F
+	dogeImage   = "wbit-dogecoind:" + dogeVersion
+	rpcUser     = "wbtest"
+	rpcPass     = "wbtestpass"
 )
+
+// Run accounting: every top-level test calls track, and TestMain prints how
+// many really ran against live nodes. Nothing here skips: if Docker or a
+// node cannot start, the run fails.
+var (
+	testsRun, testsPassed, nodesStarted, blocksVerified atomic.Int64
+)
+
+func track(t *testing.T) {
+	testsRun.Add(1)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			testsPassed.Add(1)
+		}
+	})
+}
+
+func TestMain(m *testing.M) {
+	if out, err := exec.Command("docker", "info", "--format", "{{.ServerVersion}}").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: Docker is not available, regtests cannot run: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	code := m.Run()
+	run, passed := testsRun.Load(), testsPassed.Load()
+	fmt.Printf("REGTEST SUMMARY: %d tests executed, %d passed, %d failed; %d nodes started; %d blocks verified on chain\n",
+		run, passed, run-passed, nodesStarted.Load(), blocksVerified.Load())
+	if code == 0 && run == 0 {
+		fmt.Fprintln(os.Stderr, "FAIL: no regtest executed")
+		code = 1
+	}
+	os.Exit(code)
+}
 
 func docker(t *testing.T, args ...string) string {
 	t.Helper()
@@ -63,29 +106,58 @@ type Node struct {
 
 func startNode(t *testing.T, coin, network, name string, extra ...string) *Node {
 	t.Helper()
-	image := btcImage
+	image, entry := btcImage, "bitcoind"
 	args := []string{
-		"-regtest", "-server", "-rpcuser=" + rpcUser, "-rpcpassword=" + rpcPass,
+		"-regtest", "-server", "-rpcuser=" + rpcUser, "-rpcpassword=" + rpcPass, "-rpcport=18443",
 		"-rpcbind=0.0.0.0", "-rpcallowip=0.0.0.0/0", "-zmqpubhashblock=tcp://0.0.0.0:28332",
 		"-fallbackfee=0.0002", "-listen=1", "-printtoconsole=1", "-rpcworkqueue=256",
 	}
-	if coin == "btc" {
+	switch coin {
+	case "btc":
 		args = append(args, "-limitancestorcount=1000", "-limitdescendantcount=1000",
 			"-limitancestorsize=2000", "-limitdescendantsize=2000")
-	} else {
+	case "ltc":
+		ensureLitecoinImage(t)
+		image, entry = ltcImage, "litecoind"
+	case "doge":
+		ensureDogecoinImage(t)
+		image, entry = dogeImage, "dogecoind"
+	default:
 		image = bchImage
 	}
 	args = append(args, extra...)
 	// Fixed host ports: Docker reassigns ephemeral ports when a container
 	// restarts, and the node-restart test needs stable endpoints.
-	run := []string{"run", "-d", "--name", name, "--network", network, "--network-alias", name,
-		"-p", fmt.Sprintf("127.0.0.1:%d:18443", freePort(t)), "-p", fmt.Sprintf("127.0.0.1:%d:28332", freePort(t)),
-		"--entrypoint", "bitcoind", image}
-	docker(t, append(run, args...)...)
+	// A port picked by freePort can be taken before Docker binds it, so a
+	// clash is retried with new ports rather than failing the test.
+	for attempt := 1; ; attempt++ {
+		run := []string{"run", "-d", "--name", name, "--network", network, "--network-alias", name,
+			"-p", fmt.Sprintf("127.0.0.1:%d:18443", freePort(t)), "-p", fmt.Sprintf("127.0.0.1:%d:28332", freePort(t)),
+			"--entrypoint", entry, image}
+		out, err := exec.Command("docker", append(run, args...)...).CombinedOutput()
+		if err == nil {
+			break
+		}
+		clash := strings.Contains(string(out), "port is already allocated") || strings.Contains(string(out), "address already in use")
+		if !clash || attempt == 5 {
+			t.Fatalf("docker run %s: %v\n%s", name, err, out)
+		}
+		t.Logf("host port clash starting %s (attempt %d), retrying: %s", name, attempt, strings.TrimSpace(string(out)))
+		exec.Command("docker", "rm", "-f", name).Run()
+	}
 	t.Cleanup(func() {
+		// With WB_IT_LOGDIR set, keep every node's full log.
+		if dir := os.Getenv("WB_IT_LOGDIR"); dir != "" {
+			out, _ := exec.Command("docker", "logs", name).CombinedOutput()
+			p := filepath.Join(dir, logName(t, name))
+			_ = os.WriteFile(p, out, 0o644)
+			if t.Failed() {
+				t.Logf("--- %s full log: %s", name, p)
+			}
+		}
 		if t.Failed() {
 			out, _ := exec.Command("docker", "logs", "--tail", "40", name).CombinedOutput()
-			t.Logf("--- %s logs ---\n%s", name, out)
+			t.Logf("--- %s logs (last 40 lines) ---\n%s", name, out)
 		}
 		exec.Command("docker", "rm", "-f", name).Run()
 	})
@@ -106,6 +178,7 @@ func startNode(t *testing.T, coin, network, name string, extra ...string) *Node 
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+	nodesStarted.Add(1)
 	return n
 }
 
@@ -174,7 +247,7 @@ func logFile(t *testing.T, name string) (*os.File, string) {
 	if dir == "" {
 		dir = t.TempDir()
 	}
-	p := filepath.Join(dir, name)
+	p := filepath.Join(dir, logName(t, name))
 	f, err := os.Create(p)
 	if err != nil {
 		t.Fatal(err)
@@ -182,9 +255,15 @@ func logFile(t *testing.T, name string) (*os.File, string) {
 	return f, p
 }
 
+// logName prefixes a log file with the test name, so tests that reuse an
+// engine or node name do not overwrite each other's logs.
+func logName(t *testing.T, name string) string {
+	return strings.NewReplacer("/", "_", " ", "_", "=", "-").Replace(t.Name()) + "__" + name + ".log"
+}
+
 func startEngine(t *testing.T, cfg config.Config, name string) *Engine {
 	t.Helper()
-	f, path := logFile(t, name+".log")
+	f, path := logFile(t, name)
 	log, _ := logging.New(f, "debug", "text")
 	e := engine.New(cfg, "it", log.With("instance", name))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -282,6 +361,67 @@ func apiGet(t *testing.T, en *Engine, path string) []byte {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	return out
+}
+
+// ensureLitecoinImage and ensureDogecoinImage build the node test images
+// once from the official release tarballs, each checked against the SHA-256
+// from its signed SHA256SUMS.asc, on a digest-pinned Debian base.
+func ensureLitecoinImage(t *testing.T) {
+	ensureReleaseImage(t, ltcImage, "litecoind", "litecoin-"+ltcVersion+"-x86_64-linux-gnu.tar.gz",
+		"https://github.com/litecoin-project/litecoin/releases/download/v"+ltcVersion+"/", ltcSHA256,
+		"LTC_VERSION="+ltcVersion, "LTC_SHA256="+ltcSHA256)
+}
+
+func ensureDogecoinImage(t *testing.T) {
+	ensureReleaseImage(t, dogeImage, "dogecoind", "dogecoin-"+dogeVersion+"-x86_64-linux-gnu.tar.gz",
+		"https://github.com/dogecoin/dogecoin/releases/download/v"+dogeVersion+"/", dogeSHA256,
+		"DOGE_VERSION="+dogeVersion, "DOGE_SHA256="+dogeSHA256)
+}
+
+func ensureReleaseImage(t *testing.T, image, dockerDir, name, baseURL, sha string, buildArgs ...string) {
+	t.Helper()
+	if exec.Command("docker", "image", "inspect", image).Run() == nil {
+		return
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		cache = os.TempDir()
+	}
+	dir := filepath.Join(cache, "wizard-blocks-it", strings.TrimSuffix(name, "-x86_64-linux-gnu.tar.gz"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tarball := filepath.Join(dir, name)
+	sum := func() string {
+		b, err := os.ReadFile(tarball)
+		if err != nil {
+			return ""
+		}
+		h := sha256.Sum256(b)
+		return hex.EncodeToString(h[:])
+	}
+	if sum() != sha {
+		if out, err := exec.Command("curl", "-fsSL", "-m", "600", "-o", tarball, baseURL+name).CombinedOutput(); err != nil {
+			t.Fatalf("download %s: %v\n%s", baseURL+name, err, out)
+		}
+		if got := sum(); got != sha {
+			t.Fatalf("%s: SHA-256 %s, signed release says %s", name, got, sha)
+		}
+	}
+	src, err := os.ReadFile(filepath.Join(dockerDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"build", "-q", "-t", image}
+	for _, a := range buildArgs {
+		args = append(args, "--build-arg", a)
+	}
+	if out, err := exec.Command("docker", append(args, dir)...).CombinedOutput(); err != nil {
+		t.Fatalf("build %s: %v\n%s", image, err, out)
+	}
 }
 
 func freePort(t *testing.T) int {

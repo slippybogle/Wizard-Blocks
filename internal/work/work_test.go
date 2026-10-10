@@ -86,7 +86,11 @@ func checkAssembledBlock(t *testing.T, tmpl *Template, p CoinParams, script []by
 	en1 := []byte{1, 2, 3, 4}
 	en2 := []byte{9, 8, 7, 6, 5, 4, 3, 2}
 	h := j.Header(en1, en2, tmpl.CurTime+1, 0xdeadbeef, tmpl.Version|0x00002000)
-	blk, err := bitcoin.ParseBlock(j.Block(&h, en1, en2), p.Segwit)
+	parse := func(b []byte) (*bitcoin.Block, error) { return bitcoin.ParseBlock(b, p.Segwit) }
+	if p.MWEB {
+		parse = bitcoin.ParseBlockMWEB
+	}
+	blk, err := parse(j.Block(&h, en1, en2))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,6 +19,8 @@ import (
 	"github.com/fladnagmai/wizard-blocks/internal/node"
 	"github.com/fladnagmai/wizard-blocks/internal/stats"
 	"github.com/fladnagmai/wizard-blocks/internal/stratum"
+
+	"github.com/fladnagmai/wizard-blocks/internal/pow"
 )
 
 //go:embed static
@@ -372,12 +374,14 @@ type StratumInfo struct {
 	Difficulty      *stratum.DiffSettings `json:"difficulty,omitempty"`
 }
 
-// odds returns the probability of at least one block in seconds at hashrate.
-func odds(hashrate, netDiff, seconds float64) float64 {
-	if hashrate <= 0 || netDiff <= 0 {
+// odds returns the probability of at least one block in seconds at hashrate,
+// where blockHashes is the expected number of hashes per block (network
+// difficulty in share units × hashes per difficulty-1 share).
+func odds(hashrate, blockHashes, seconds float64) float64 {
+	if hashrate <= 0 || blockHashes <= 0 {
 		return 0
 	}
-	return 1 - math.Exp(-hashrate*seconds/(netDiff*4294967296))
+	return 1 - math.Exp(-hashrate*seconds/blockHashes)
 }
 
 // BuildState assembles the UI document.
@@ -426,13 +430,14 @@ func (s *Server) BuildState(maxBlocks, maxRounds int) State {
 	if hr == 0 {
 		hr = snap.Pool.Hashrate5m
 	}
+	blockHashes := nd * pow.For(s.cfg.Coin).Diff1Hashes
 	if hr > 0 && nd > 0 {
-		v := nd * 4294967296 / hr
+		v := blockHashes / hr
 		st.Derived.ExpectedBlockS = &v
 	}
-	st.Derived.OddsDay = odds(hr, nd, 86400)
-	st.Derived.OddsWeek = odds(hr, nd, 7*86400)
-	st.Derived.OddsYear = odds(hr, nd, 365*86400)
+	st.Derived.OddsDay = odds(hr, blockHashes, 86400)
+	st.Derived.OddsWeek = odds(hr, blockHashes, 7*86400)
+	st.Derived.OddsYear = odds(hr, blockHashes, 365*86400)
 	st.Derived.StaleShares = snap.Pool.Rejects["stale"]
 	if l := snap.Pool.Luck; l.Shares > 0 {
 		v := l.Effort * 100

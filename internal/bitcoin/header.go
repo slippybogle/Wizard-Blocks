@@ -2,6 +2,7 @@ package bitcoin
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 )
 
@@ -56,10 +57,24 @@ func ParseHeader(b []byte) (*Header, error) {
 type Block struct {
 	Header *Header
 	Txs    []*Tx
+	// MWEB is the serialized MWEB block of a Litecoin block (nil if none):
+	// the bytes after the 0x01 optional-pointer flag, exactly as
+	// getblocktemplate returns them in its "mweb" field.
+	MWEB []byte
 }
 
 // ParseBlock parses a full serialized block.
 func ParseBlock(b []byte, allowWitness bool) (*Block, error) {
+	return parseBlock(b, allowWitness, false)
+}
+
+// ParseBlockMWEB parses a Litecoin block: transactions may use the MWEB flag
+// (HogEx), and when the last transaction is a HogEx the block ends with the
+// MWEB block as an optional pointer (one 0x01 byte, then the MWEB block;
+// litecoin primitives/block.h CBlock::SerializationOp).
+func ParseBlockMWEB(b []byte) (*Block, error) { return parseBlock(b, true, true) }
+
+func parseBlock(b []byte, allowWitness, allowMWEB bool) (*Block, error) {
 	if len(b) < HeaderSize {
 		return nil, ErrShort
 	}
@@ -77,11 +92,28 @@ func ParseBlock(b []byte, allowWitness bool) (*Block, error) {
 	}
 	blk := &Block{Header: h, Txs: make([]*Tx, 0, n)}
 	for i := uint64(0); i < n; i++ {
-		tx, err := ReadTx(r, allowWitness)
+		tx, err := readTx(r, allowWitness, allowMWEB)
 		if err != nil {
 			return nil, fmt.Errorf("tx %d: %w", i, err)
 		}
+		if tx.HogEx && i != n-1 {
+			return nil, fmt.Errorf("tx %d: HogEx is not the last transaction", i)
+		}
 		blk.Txs = append(blk.Txs, tx)
+	}
+	if last := blk.Txs[len(blk.Txs)-1]; last.HogEx && len(blk.Txs) >= 2 {
+		set, err := r.Byte()
+		if err != nil {
+			return nil, err
+		}
+		if set != 1 {
+			return nil, errors.New("block with a HogEx but no MWEB block")
+		}
+		blk.MWEB = r.b[r.Pos():]
+		if len(blk.MWEB) == 0 {
+			return nil, errors.New("empty MWEB block")
+		}
+		r.pos = len(r.b)
 	}
 	if r.Len() != 0 {
 		return nil, fmt.Errorf("%d trailing bytes after block", r.Len())

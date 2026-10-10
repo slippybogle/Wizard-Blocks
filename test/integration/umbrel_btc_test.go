@@ -18,6 +18,7 @@ import (
 // and the simple one-page UI. The payout address is set from that UI's API
 // (checked by the node), then blocks are mined and checked on chain.
 func TestRegtestBTCUmbrelApp(t *testing.T) {
+	track(t)
 	suffix := randHex(3)
 	netName := "wbit-btcapp-" + suffix
 	docker(t, "network", "create", netName)
@@ -133,6 +134,7 @@ func TestRegtestBTCUmbrelApp(t *testing.T) {
 		if blk.Height <= start || blk.Tx[0].Vout[0].ScriptPubKey.Hex != want {
 			t.Fatalf("block %s: height %d, coinbase pays %s, want %s", b.Hash, blk.Height, blk.Tx[0].Vout[0].ScriptPubKey.Hex, want)
 		}
+		blocksVerified.Add(1)
 	}
 	st := state()
 	pool := st["pool"].(map[string]any)

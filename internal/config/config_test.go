@@ -64,7 +64,7 @@ func TestFileAndValidation(t *testing.T) {
 		t.Fatalf("unknown field accepted: %v", err)
 	}
 	bad := []map[string]string{
-		{"WB_COIN": "ltc"},
+		{"WB_COIN": "eth"},
 		{"WB_VERSION_ROLLING_MASK": "ffffffff"},
 		{"WB_VERSION_ROLLING_MASK": "xyz"},
 		{"WB_EXTRANONCE2_SIZE": "1"},

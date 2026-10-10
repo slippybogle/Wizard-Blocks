@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/fladnagmai/wizard-blocks/internal/address"
+	"github.com/fladnagmai/wizard-blocks/internal/auxpow"
 	"github.com/fladnagmai/wizard-blocks/internal/config"
+	"github.com/fladnagmai/wizard-blocks/internal/merged"
 	"github.com/fladnagmai/wizard-blocks/internal/node"
 	"github.com/fladnagmai/wizard-blocks/internal/stats"
 	"github.com/fladnagmai/wizard-blocks/internal/stratum"
@@ -42,6 +44,8 @@ type Engine struct {
 
 	cacheMu sync.Mutex
 	cache   map[string]*stratum.Payout
+
+	doge *merged.Doge // Dogecoin merged mining (nil: off)
 }
 
 // New creates an engine. It performs no I/O.
@@ -109,7 +113,12 @@ func checkCoin(coin, subversion string) error {
 	s := strings.ToLower(subversion)
 	bchLike := strings.Contains(s, "cash") || strings.Contains(s, "bch") || strings.Contains(s, "flowee")
 	btcLike := strings.Contains(s, "/satoshi:")
+	ltcLike := strings.Contains(s, "litecoin")
 	switch {
+	case coin == "ltc" && !ltcLike:
+		return fmt.Errorf("coin is ltc but node is %q (not a Litecoin node)", subversion)
+	case coin != "ltc" && ltcLike:
+		return fmt.Errorf("coin is %s but node is %q (a Litecoin node)", coin, subversion)
 	case coin == "btc" && bchLike:
 		return fmt.Errorf("coin is btc but node is %q (a Bitcoin Cash node)", subversion)
 	case coin == "bch" && btcLike && !bchLike:
@@ -201,18 +210,34 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var aux work.AuxSource
+	if e.cfg.Doge.Enabled() {
+		if e.doge, err = e.initDoge(ctx); err != nil {
+			return err
+		}
+		if e.doge != nil {
+			aux = e.doge
+		}
+	}
 	e.mgr = work.NewManager(work.Config{
 		Params: params, Chain: ci.Chain, Tag: []byte(e.cfg.Payout.CoinbaseTag),
 		Extranonce2Size: e.cfg.Stratum.Extranonce2Size,
 		PollInterval:    time.Duration(e.cfg.Node.PollIntervalMs) * time.Millisecond,
 		RefreshInterval: time.Duration(e.cfg.Node.TemplateRefreshS) * time.Second,
 		ZMQEndpoint:     e.cfg.Node.ZMQHashBlock,
+		DataDir:         e.cfg.DataDir,
+		Aux:             aux,
 	}, e.rpc, e.st, e.log)
 
 	// Fail fast on a coinbase that can never be valid (e.g. tag too long).
+	var auxTag []byte
+	if aux != nil {
+		auxTag = make([]byte, auxpow.TagSize)
+	}
 	if _, err := work.BuildCoinbase(work.CoinbaseParams{
 		Height: 1 << 30, Tag: []byte(e.cfg.Payout.CoinbaseTag), Extranonce2Size: e.cfg.Stratum.Extranonce2Size,
 		PayoutScript: make([]byte, 40), Value: 1, WitnessCommitment: make([]byte, 38), MinTxSize: params.MinTxSize,
+		AuxTag: auxTag,
 	}); err != nil {
 		return err
 	}
@@ -270,6 +295,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	go func() { errc <- e.srv.Serve(ctx) }()
 	go func() { errc <- e.api.Serve() }()
 	go func() { errc <- e.mgr.Run(ctx) }()
+	if e.doge != nil {
+		go e.doge.Run(ctx)
+	}
 
 	saveTick := time.NewTicker(time.Minute)
 	defer saveTick.Stop()

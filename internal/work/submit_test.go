@@ -2,11 +2,15 @@ package work
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,6 +95,67 @@ func TestBlockAnnouncedOnce(t *testing.T) {
 	}
 	if s := st.Snapshot(); s.Pool.BlocksFound != 1 || len(s.Blocks) != 1 {
 		t.Fatalf("blocks_found %d records %d", s.Pool.BlocksFound, len(s.Blocks))
+	}
+}
+
+// A block the node refuses: the exact reason and the full block hex are
+// logged, and the hex is saved under the data dir, identical to what was sent.
+func TestRejectedBlockKeepsReasonAndHex(t *testing.T) {
+	var sent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params []any  `json:"params"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &req)
+		switch req.Method {
+		case "submitblock":
+			sent, _ = req.Params[0].(string)
+			io.WriteString(w, `{"result":"bad-txns-inputs-missingorspent","error":null}`)
+		case "getblockheader":
+			// Nodes keep the header of a block they refused (regtest: a
+			// corrupted MWEB block came back as confirmations -1).
+			io.WriteString(w, `{"result":{"confirmations":-1,"height":7},"error":null}`)
+		default:
+			io.WriteString(w, `{"result":null,"error":{"code":-5,"message":"Block not found"}}`)
+		}
+	}))
+	defer srv.Close()
+	var logs syncBuf
+	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	dir := t.TempDir()
+	p, _ := ParamsFor(address.LTC)
+	st := stats.New("ltc", "t", "")
+	m := NewManager(Config{Params: p, Chain: "regtest", Extranonce2Size: 8, PollInterval: time.Second, RefreshInterval: time.Second, DataDir: dir},
+		node.NewClient(srv.URL, "u", "p", "", 5*time.Second), st, log)
+	raw := &node.BlockTemplate{Version: 536870912, PreviousBlockHash: strings.Repeat("0", 63) + "1",
+		CoinbaseValue: 5000000000, MinTime: 1000, CurTime: 2000, Bits: "207fffff", Height: 7}
+	tmpl, err := NewTemplate(raw, p, "regtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cb, _ := BuildCoinbase(CoinbaseParams{Height: 7, Extranonce2Size: 8, PayoutScript: []byte{0x51}, Value: tmpl.CoinbaseValue})
+	job := newJob("1", 1, tmpl, []byte{0x51}, "x", cb)
+	en1, en2 := []byte{1, 2, 3, 4}, make([]byte, 8)
+	h := job.Header(en1, en2, 2000, 7, tmpl.Version)
+	m.SubmitBlock(Candidate{Job: job, Header: h, En1: en1, En2: en2, Worker: "w"})
+	m.Wait(t.Context())
+
+	if b := st.Snapshot().Blocks; len(b) != 1 || b[0].Status != "rejected" || b[0].Reason != "bad-txns-inputs-missingorspent" {
+		t.Fatalf("refused block recorded as %+v, want rejected with the node's reason", b)
+	}
+	want := hex.EncodeToString(job.Block(&h, en1, en2))
+	if sent != want {
+		t.Fatal("submitted hex differs from the assembled block")
+	}
+	out := logs.String()
+	if !strings.Contains(out, "reason=bad-txns-inputs-missingorspent") || !strings.Contains(out, "hex="+want) {
+		t.Fatalf("reason or block hex missing from the log:\n%.600s", out)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, "rejected-blocks", fmt.Sprintf("7-%s.hex", h.Hash())))
+	if err != nil || strings.TrimSpace(string(saved)) != want {
+		t.Fatalf("saved hex: %v", err)
 	}
 }
 

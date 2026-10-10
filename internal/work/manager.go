@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/fladnagmai/wizard-blocks/internal/bitcoin"
 	"github.com/fladnagmai/wizard-blocks/internal/logging"
 	"github.com/fladnagmai/wizard-blocks/internal/node"
+	"github.com/fladnagmai/wizard-blocks/internal/pow"
 	"github.com/fladnagmai/wizard-blocks/internal/stats"
 )
 
@@ -28,6 +31,11 @@ type Config struct {
 	PollInterval    time.Duration
 	RefreshInterval time.Duration
 	ZMQEndpoint     string
+	// DataDir, when set, receives the full hex of every block the node
+	// refuses (rejected-blocks/<height>-<hash>.hex) for diagnosis.
+	DataDir string
+	// Aux, when set, supplies aux chains to merge-mine (Dogecoin on LTC).
+	Aux AuxSource
 }
 
 // Work is the current unit of mining state: one verified template. Jobs for
@@ -35,7 +43,9 @@ type Config struct {
 type Work struct {
 	Tmpl  *Template
 	Gen   uint64
-	Clean bool // the previous block changed: miners must drop old work
+	Clean bool // miners must drop old work (a new block, or new aux work)
+	// Aux is the merged-mining state (nil when no aux chain is mined).
+	Aux *AuxWork
 
 	m        *Manager
 	mu       sync.Mutex
@@ -57,11 +67,13 @@ func (w *Work) Job(script []byte, addr string) (*Job, error) {
 		Value:             w.Tmpl.CoinbaseValue,
 		WitnessCommitment: w.Tmpl.WitnessCommitment,
 		MinTxSize:         w.m.cfg.Params.MinTxSize,
+		AuxTag:            w.Aux.tag(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	j := newJob(w.m.nextJobID(), w.Gen, w.Tmpl, append([]byte(nil), script...), addr, cb)
+	j.Aux = w.Aux
 	w.m.register(j)
 	w.byScript[string(script)] = j
 	return j, nil
@@ -81,14 +93,18 @@ type Manager struct {
 	jobs      map[string]*Job
 	listeners []func(*Work)
 
-	jobSeq    atomic.Uint64
-	kick      chan struct{}
-	submitWG  sync.WaitGroup
-	submitted sync.Map // block hash -> struct{}
-	announced sync.Map // block hash -> struct{}: "BLOCK ACCEPTED" logged
-	ready     chan struct{}
-	readyOnce sync.Once
+	jobSeq       atomic.Uint64
+	kick         chan struct{}
+	submitWG     sync.WaitGroup
+	submitted    sync.Map // block hash -> struct{}
+	announced    sync.Map // block hash -> struct{}: "BLOCK ACCEPTED" logged
+	auxSubmitted sync.Map // "chain:hash" -> struct{}: aux block solution submitted
+	ready        chan struct{}
+	readyOnce    sync.Once
 }
+
+// PoW returns the proof-of-work algorithm of the coin being mined.
+func (m *Manager) PoW() pow.Algo { return m.cfg.Params.PoW() }
 
 // NewManager creates a manager.
 func NewManager(cfg Config, rpc *node.Client, st *stats.Collector, log *slog.Logger) *Manager {
@@ -230,6 +246,10 @@ func (m *Manager) Run(ctx context.Context) error {
 	status := time.NewTicker(5 * time.Second)
 	defer status.Stop()
 
+	var auxChanged <-chan struct{}
+	if m.cfg.Aux != nil {
+		auxChanged = m.cfg.Aux.Changed()
+	}
 	m.update(ctx, "startup")
 	for {
 		select {
@@ -240,6 +260,8 @@ func (m *Manager) Run(ctx context.Context) error {
 			m.update(ctx, "zmq")
 		case <-m.kick:
 			m.update(ctx, "kick")
+		case <-auxChanged:
+			m.updateAux(ctx)
 		case <-poll.C:
 			cur := m.Current()
 			best, err := m.rpc.GetBestBlockHash(ctx)
@@ -298,6 +320,14 @@ func (m *Manager) update(ctx context.Context, reason string) {
 			"coinbasevalue", t.CoinbaseValue, "subsidy", t.ExpectedSubsidy, "fees", t.TotalFees)
 	}
 
+	var aux *AuxWork
+	if m.cfg.Aux != nil {
+		if aux, err = newAuxWork(m.cfg.Aux.Current(), m.PoW()); err != nil {
+			m.log.Error("aux commitment", "err", err)
+			aux = nil
+		}
+	}
+
 	m.mu.Lock()
 	prev := m.cur
 	clean := prev == nil || prev.Tmpl.PrevHash != t.PrevHash
@@ -316,7 +346,7 @@ func (m *Manager) update(ctx context.Context, reason string) {
 			}
 		}
 	}
-	w := &Work{Tmpl: t, Gen: m.gen, Clean: clean, m: m, byScript: map[string]*Job{}}
+	w := &Work{Tmpl: t, Gen: m.gen, Clean: clean, Aux: aux, m: m, byScript: map[string]*Job{}}
 	m.cur = w
 	listeners := append([]func(*Work){}, m.listeners...)
 	m.mu.Unlock()
@@ -379,6 +409,24 @@ func (m *Manager) SubmitBlock(c Candidate) {
 	}()
 }
 
+// keepRejected logs the full block hex of a block the node refused, with
+// the node's exact reason, and saves it under DataDir for diagnosis.
+func (m *Manager) keepRejected(height int64, hash, reason, blockHex string) {
+	path := ""
+	if m.cfg.DataDir != "" {
+		dir := filepath.Join(m.cfg.DataDir, "rejected-blocks")
+		path = filepath.Join(dir, fmt.Sprintf("%d-%s.hex", height, hash))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			m.log.Error("cannot save rejected block", "err", err)
+			path = ""
+		} else if err := os.WriteFile(path, []byte(blockHex+"\n"), 0o600); err != nil {
+			m.log.Error("cannot save rejected block", "err", err)
+			path = ""
+		}
+	}
+	m.log.Error("rejected block hex", "height", height, "hash", hash, "reason", reason, "saved", path, "bytes", len(blockHex)/2, "hex", blockHex)
+}
+
 func (m *Manager) assemble(c Candidate) []byte {
 	return c.Job.Block(&c.Header, c.En1, c.En2)
 }
@@ -424,6 +472,7 @@ func (m *Manager) submit(c Candidate, hash bitcoin.Hash, block []byte) {
 	}
 	if rec.Status == "rejected" {
 		m.log.Error("BLOCK REJECTED by node", "height", t.Height, "hash", rec.Hash, "reason", rec.Reason)
+		m.keepRejected(t.Height, rec.Hash, rec.Reason, blockHex)
 		// Even so, check whether the node knows the block (e.g. "duplicate" race).
 	}
 

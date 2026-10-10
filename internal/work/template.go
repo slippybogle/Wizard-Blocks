@@ -14,6 +14,7 @@ import (
 	"github.com/fladnagmai/wizard-blocks/internal/address"
 	"github.com/fladnagmai/wizard-blocks/internal/bitcoin"
 	"github.com/fladnagmai/wizard-blocks/internal/node"
+	"github.com/fladnagmai/wizard-blocks/internal/pow"
 )
 
 // CoinParams are the consensus differences between BTC and BCH that matter
@@ -24,15 +25,34 @@ type CoinParams struct {
 	CTOR      bool     // BCH canonical transaction order (2018-11)
 	MinTxSize int      // BCH: 100 bytes (2018-11)
 	GBTRules  []string // getblocktemplate "rules"
+	MWEB      bool     // LTC: the template may carry an MWEB block (HogEx last tx)
+	Algo      pow.Algo // proof-of-work algorithm and share difficulty units
+	// Halving is the subsidy halving interval (BTC/BCH 210000, LTC 840000);
+	// every regtest uses 150.
+	Halving int64
 }
+
+// algo returns the PoW algorithm (SHA-256d when unset).
+func (p CoinParams) algo() pow.Algo {
+	if p.Algo.ShareDiff1 == nil {
+		return pow.SHA256d
+	}
+	return p.Algo
+}
+
+// PoW returns the coin's proof-of-work algorithm.
+func (p CoinParams) PoW() pow.Algo { return p.algo() }
 
 // ParamsFor returns the parameters for coin.
 func ParamsFor(c address.Coin) (CoinParams, error) {
 	switch c {
 	case address.BTC:
-		return CoinParams{Coin: c, Segwit: true, GBTRules: []string{"segwit"}}, nil
+		return CoinParams{Coin: c, Segwit: true, GBTRules: []string{"segwit"}, Algo: pow.SHA256d, Halving: 210000}, nil
 	case address.BCH:
-		return CoinParams{Coin: c, CTOR: true, MinTxSize: 100}, nil
+		return CoinParams{Coin: c, CTOR: true, MinTxSize: 100, Algo: pow.SHA256d, Halving: 210000}, nil
+	case address.LTC:
+		// GBT refuses to answer without both rules (litecoin rpc/mining.cpp).
+		return CoinParams{Coin: c, Segwit: true, MWEB: true, GBTRules: []string{"mweb", "segwit"}, Algo: pow.Scrypt, Halving: 840000}, nil
 	}
 	return CoinParams{}, fmt.Errorf("unknown coin %q", c)
 }
@@ -59,8 +79,12 @@ type Template struct {
 	BranchHex     []string       // Branch in internal byte order, as sent in mining.notify
 	// WitnessCommitment is the BIP141 commitment output script (nil if none).
 	WitnessCommitment []byte
-	FetchedAt         time.Time
-	ExpectedSubsidy   int64
+	// MWEB is Litecoin's serialized MWEB block (nil if none). When set, the
+	// last template transaction is the HogEx and the block ends with 0x01
+	// followed by these bytes.
+	MWEB            []byte
+	FetchedAt       time.Time
+	ExpectedSubsidy int64
 }
 
 // TxCount returns the number of transactions including the coinbase.
@@ -110,7 +134,7 @@ func NewTemplate(raw *node.BlockTemplate, p CoinParams, chain string) (*Template
 			return nil, fmt.Errorf("template target %s disagrees with bits %s", raw.Target, raw.Bits)
 		}
 	}
-	t.NetworkDiff = bitcoin.DifficultyFromTarget(t.Target)
+	t.NetworkDiff = p.algo().Difficulty(t.Target) // in share units (Scrypt: node difficulty × 65536)
 	if raw.CurTime <= 0 || raw.CurTime > 0xffffffff || raw.MinTime < 0 || raw.MinTime > raw.CurTime {
 		return nil, fmt.Errorf("template times cur=%d min=%d invalid", raw.CurTime, raw.MinTime)
 	}
@@ -120,7 +144,10 @@ func NewTemplate(raw *node.BlockTemplate, p CoinParams, chain string) (*Template
 		t.MinShareTime = t.CurTime
 	}
 
-	halving := int64(210000)
+	halving := p.Halving
+	if halving == 0 {
+		halving = 210000
+	}
 	if chain == "regtest" {
 		halving = 150
 	}
@@ -131,14 +158,26 @@ func NewTemplate(raw *node.BlockTemplate, p CoinParams, chain string) (*Template
 		data        []byte
 	}
 	entries := make([]entry, 0, len(raw.Transactions))
+	lastHogEx := false
 	for i, tt := range raw.Transactions {
 		data, err := hex.DecodeString(tt.Data)
 		if err != nil {
 			return nil, fmt.Errorf("tx %d: bad hex: %w", i, err)
 		}
-		tx, err := bitcoin.ParseTx(data, p.Segwit)
+		var tx *bitcoin.Tx
+		if p.MWEB {
+			tx, err = bitcoin.ParseTxMWEB(data)
+		} else {
+			tx, err = bitcoin.ParseTx(data, p.Segwit)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("tx %d: %w", i, err)
+		}
+		if tx.HogEx {
+			if i != len(raw.Transactions)-1 {
+				return nil, fmt.Errorf("tx %d: HogEx is not the last transaction", i)
+			}
+			lastHogEx = true
 		}
 		if tx.IsCoinbase() {
 			return nil, fmt.Errorf("tx %d: template contains a coinbase", i)
@@ -154,6 +193,22 @@ func NewTemplate(raw *node.BlockTemplate, p CoinParams, chain string) (*Template
 		}
 		t.TotalFees += tt.Fee
 		entries = append(entries, entry{tx.TxID, tx.WTxID, data})
+	}
+
+	// MWEB (Litecoin): the "mweb" field and a HogEx as the last transaction
+	// come together or not at all; the HogEx commits to the MWEB block, so
+	// the bytes are used exactly as the node returned them.
+	switch {
+	case raw.MWEB != "" && !p.MWEB:
+		return nil, errors.New("unexpected mweb block in template")
+	case raw.MWEB != "" && !lastHogEx:
+		return nil, errors.New("template has an mweb block but its last transaction is not a HogEx")
+	case raw.MWEB == "" && lastHogEx:
+		return nil, errors.New("template ends with a HogEx but has no mweb block")
+	case raw.MWEB != "":
+		if t.MWEB, err = hex.DecodeString(raw.MWEB); err != nil || len(t.MWEB) == 0 {
+			return nil, fmt.Errorf("mweb: bad hex: %v", err)
+		}
 	}
 
 	if p.CTOR {

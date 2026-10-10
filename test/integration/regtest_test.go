@@ -175,6 +175,7 @@ func mineUntil(t *testing.T, en *Engine, target int, timeout time.Duration) {
 }
 
 func runCoin(t *testing.T, cfg suite) {
+	track(t)
 	coin, expectSignal, nodeArgs := cfg.coin, cfg.expectSignal, cfg.nodeArgs
 	if cfg.phaseA == 0 {
 		cfg.phaseA = 150
@@ -931,6 +932,7 @@ func verifyChain(t *testing.T, a *Node, coin string, startHeight int64, external
 	for _, r := range accepted {
 		types[r.Address] = true
 	}
+	blocksVerified.Add(int64(len(accepted)))
 	t.Logf("%s: VERIFIED %d accepted blocks (heights %d..%d), %d external, largest block %d txs, total fees %d sats, %d distinct payout addresses",
 		coin, len(accepted), startHeight+1, final, external, maxTxs, totalFees, len(types))
 }
@@ -1122,19 +1124,30 @@ func testLiveDifficulty(t *testing.T, en *Engine, dataDir string) {
 	b := dial("live2", "d=2e-10") // miner pins its own difficulty
 	// Values below regtest network difficulty (4.66e-10) so the cap does not hide them.
 	settings := map[string]any{"vardiff_min": 1e-11, "vardiff_max": 1000, "vardiff_target_seconds": 10, "fixed_diff": 1e-10, "worker_overrides": map[string]float64{}}
+	_, _, _, _, j0 := a.State()
 	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
 		t.Fatalf("PUT fixed: %d", code)
 	}
 	diffIs(a, 1e-10, "FIXED_DIFF pushed to connected miner")
 	diffIs(b, 2e-10, "password d= kept over FIXED_DIFF")
-	jobBefore := a.DrainJobs()
+	// The job that follows this change, so the next check cannot mistake it
+	// for the one after the override.
+	jctx, jcancel := context.WithTimeout(ctx, 5*time.Second)
+	jobBefore, err := a.WaitJobOtherThan(jctx, j0.ID)
+	jcancel()
+	if err != nil {
+		t.Fatalf("FIXED_DIFF change was not followed by a fresh job: %v", err)
+	}
 	settings["worker_overrides"] = map[string]float64{"live1": 3e-10}
 	if code := call("PUT", "/api/admin/settings", settings); code != 200 {
 		t.Fatalf("PUT override: %d", code)
 	}
 	diffIs(a, 3e-10, "per-worker override pushed")
-	if j := a.DrainJobs(); j == nil || j.ID == jobBefore.ID {
-		t.Fatal("difficulty change was not followed by a fresh job")
+	jctx, jcancel = context.WithTimeout(ctx, 5*time.Second)
+	_, err = a.WaitJobOtherThan(jctx, jobBefore.ID)
+	jcancel()
+	if err != nil {
+		t.Fatalf("difficulty change was not followed by a fresh job: %v", err)
 	}
 	// Overrides are clamped to min/max.
 	settings["vardiff_max"] = 2.5e-10

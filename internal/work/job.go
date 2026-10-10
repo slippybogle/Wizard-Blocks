@@ -18,6 +18,8 @@ type Job struct {
 	PayoutAddr string
 	CB         *Coinbase
 	Created    time.Time
+	// Aux is the merged-mining state the coinbase commits to (nil if none).
+	Aux *AuxWork
 
 	// Precomputed mining.notify fields.
 	PrevHashHex string
@@ -74,9 +76,15 @@ func (j *Job) Header(en1, en2 []byte, ntime, nonce, version uint32) bitcoin.Head
 func (j *Job) Block(h *bitcoin.Header, en1, en2 []byte) []byte {
 	hb := h.Serialize()
 	cb := j.CB.BlockTx(en1, en2)
-	out := make([]byte, 0, len(hb)+9+len(cb)+len(j.Tmpl.TxData))
+	out := make([]byte, 0, len(hb)+9+len(cb)+len(j.Tmpl.TxData)+1+len(j.Tmpl.MWEB))
 	out = append(out, hb[:]...)
 	out = bitcoin.AppendVarInt(out, uint64(j.Tmpl.TxCount()))
 	out = append(out, cb...)
-	return append(out, j.Tmpl.TxData...)
+	out = append(out, j.Tmpl.TxData...)
+	if j.Tmpl.MWEB != nil {
+		// Litecoin: the MWEB block as an optional pointer after the HogEx.
+		out = append(out, 0x01)
+		out = append(out, j.Tmpl.MWEB...)
+	}
+	return out
 }

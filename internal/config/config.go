@@ -24,6 +24,23 @@ type Node struct {
 	RPCTimeoutS      int    `json:"rpc_timeout_s"`
 }
 
+// Doge configures Dogecoin merged mining on top of a Litecoin parent. It
+// is off when RPCURL is empty; with a node but no PayoutAddress the engine
+// mines Litecoin only and says so.
+type Doge struct {
+	RPCURL         string `json:"rpc_url"`
+	RPCUser        string `json:"rpc_user"`
+	RPCPassword    string `json:"rpc_password"`
+	RPCCookieFile  string `json:"rpc_cookie_file"`
+	ZMQHashBlock   string `json:"zmq_hashblock"`
+	PayoutAddress  string `json:"payout_address"`
+	PollIntervalMs int    `json:"poll_interval_ms"`
+	RefreshS       int    `json:"refresh_s"`
+}
+
+// Enabled reports whether a Dogecoin node is configured.
+func (d Doge) Enabled() bool { return d.RPCURL != "" }
+
 // Payout configures where block rewards go.
 type Payout struct {
 	Mode        string `json:"mode"` // fixed | miner
@@ -88,6 +105,7 @@ type Log struct {
 type Config struct {
 	Coin    string  `json:"coin"`
 	Node    Node    `json:"node"`
+	Doge    Doge    `json:"doge"`
 	Payout  Payout  `json:"payout"`
 	Stratum Stratum `json:"stratum"`
 	Vardiff Vardiff `json:"vardiff"`
@@ -102,6 +120,7 @@ func Default() Config {
 	return Config{
 		Coin: "btc",
 		Node: Node{RPCURL: "http://127.0.0.1:8332", PollIntervalMs: 1000, TemplateRefreshS: 30, RPCTimeoutS: 30},
+		Doge: Doge{PollIntervalMs: 1000, RefreshS: 5},
 		Payout: Payout{
 			Mode: "fixed", CoinbaseTag: "/wizard-blocks/",
 		},
@@ -149,7 +168,10 @@ func (c *Config) applyEnv(env func(string) string) error {
 		"WB_PAYOUT_ADDRESS": &c.Payout.Address, "WB_COINBASE_TAG": &c.Payout.CoinbaseTag,
 		"WB_STRATUM_LISTEN": &c.Stratum.Listen, "WB_VERSION_ROLLING_MASK": &c.Stratum.VersionRollingMask,
 		"WB_API_LISTEN": &c.API.Listen, "WB_LOG_LEVEL": &c.Log.Level, "WB_LOG_FORMAT": &c.Log.Format,
-		"WB_DATA_DIR": &c.DataDir, "WB_UI_LISTEN": &c.UI.Listen, "WB_UI_STYLE": &c.UI.Style, "WB_UI_ADMIN_PASSWORD": &c.UI.AdminPassword,
+		"WB_DOGE_RPC_URL": &c.Doge.RPCURL, "WB_DOGE_RPC_USER": &c.Doge.RPCUser, "WB_DOGE_RPC_PASSWORD": &c.Doge.RPCPassword,
+		"WB_DOGE_RPC_COOKIE_FILE": &c.Doge.RPCCookieFile, "WB_DOGE_ZMQ_HASHBLOCK": &c.Doge.ZMQHashBlock,
+		"WB_DOGE_PAYOUT_ADDRESS": &c.Doge.PayoutAddress,
+		"WB_DATA_DIR":            &c.DataDir, "WB_UI_LISTEN": &c.UI.Listen, "WB_UI_STYLE": &c.UI.Style, "WB_UI_ADMIN_PASSWORD": &c.UI.AdminPassword,
 	}
 	for k, p := range str {
 		if v, ok := lookup(env, k); ok {
@@ -160,6 +182,7 @@ func (c *Config) applyEnv(env func(string) string) error {
 		"WB_POLL_INTERVAL_MS": &c.Node.PollIntervalMs, "WB_TEMPLATE_REFRESH_S": &c.Node.TemplateRefreshS,
 		"WB_EXTRANONCE2_SIZE": &c.Stratum.Extranonce2Size, "WB_MAX_CONNECTIONS": &c.Stratum.MaxConnections,
 		"WB_MAX_CONNECTIONS_PER_IP": &c.Stratum.MaxConnsPerIP, "WB_STRATUM_PUBLIC_PORT": &c.Stratum.PublicPort,
+		"WB_DOGE_POLL_INTERVAL_MS": &c.Doge.PollIntervalMs, "WB_DOGE_REFRESH_S": &c.Doge.RefreshS,
 	}
 	for k, p := range ints {
 		if v, ok := lookup(env, k); ok {
@@ -241,8 +264,8 @@ func (c *Config) Validate() error {
 	var errs []error
 	add := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	c.Coin = strings.ToLower(c.Coin)
-	if c.Coin != "btc" && c.Coin != "bch" {
-		add("coin must be btc or bch, got %q", c.Coin)
+	if c.Coin != "btc" && c.Coin != "bch" && c.Coin != "ltc" {
+		add("coin must be btc, bch or ltc, got %q", c.Coin)
 	}
 	if c.Node.RPCURL == "" {
 		add("node.rpc_url is required")
@@ -261,6 +284,25 @@ func (c *Config) Validate() error {
 	}
 	if c.Node.RPCTimeoutS < 1 {
 		add("node.rpc_timeout_s must be positive")
+	}
+	if c.Doge.Enabled() {
+		if c.Coin != "ltc" {
+			add("doge merged mining needs coin ltc (the Scrypt parent), got %q", c.Coin)
+		}
+		if c.Doge.RPCUser == "" && c.Doge.RPCCookieFile == "" {
+			add("doge.rpc_user/rpc_password or doge.rpc_cookie_file is required")
+		}
+		if c.Doge.ZMQHashBlock != "" && !strings.HasPrefix(c.Doge.ZMQHashBlock, "tcp://") {
+			add("doge.zmq_hashblock must be tcp://host:port")
+		}
+		if c.Doge.PollIntervalMs < 100 || c.Doge.PollIntervalMs > 60000 {
+			add("doge.poll_interval_ms must be 100..60000")
+		}
+		if c.Doge.RefreshS < 1 || c.Doge.RefreshS > 600 {
+			add("doge.refresh_s must be 1..600")
+		}
+	} else if c.Doge.PayoutAddress != "" {
+		add("doge.payout_address is set but no doge.rpc_url")
 	}
 	switch c.Payout.Mode {
 	case "fixed":

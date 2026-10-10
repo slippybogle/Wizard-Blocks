@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/fladnagmai/wizard-blocks/internal/pow"
 )
 
 // Job is a parsed mining.notify.
@@ -365,6 +367,24 @@ func (c *Client) WaitJob(ctx context.Context) (*Job, error) {
 	}
 }
 
+// WaitJobOtherThan waits until the latest job's ID differs from prevID.
+// mining.set_difficulty and the mining.notify that follows it are separate
+// lines, so the new difficulty can be visible in State before the job is.
+func (c *Client) WaitJobOtherThan(ctx context.Context, prevID string) (*Job, error) {
+	for {
+		if _, _, _, _, j := c.State(); j != nil && j.ID != prevID {
+			return j, nil
+		}
+		select {
+		case <-c.jobs:
+		case <-c.closed:
+			return nil, fmt.Errorf("connection closed: %v", c.err)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 // DrainJobs discards queued notifications and returns the latest job.
 func (c *Client) DrainJobs() *Job {
 	for {
@@ -398,6 +418,17 @@ func Header(j *Job, en1, en2 []byte, version, ntime, nonce uint32) [80]byte {
 	binary.LittleEndian.PutUint32(h[72:], j.Bits)
 	binary.LittleEndian.PutUint32(h[76:], nonce)
 	return h
+}
+
+// scryptBE returns the Scrypt PoW hash of a header as a big-endian number's
+// bytes, like HashBE.
+func scryptBE(h [80]byte) [32]byte {
+	pw := pow.Scrypt.PoWHash(h[:])
+	var out [32]byte
+	for i := 0; i < 32; i++ {
+		out[i] = pw[31-i]
+	}
+	return out
 }
 
 // HashBE returns the header hash as a big-endian number's bytes (display order).
@@ -469,7 +500,11 @@ func GrindFrom(j *Job, en1, en2 []byte, version, ntime, start uint32, pred func(
 type MineOptions struct {
 	Worker      string
 	Threads     int
-	MinZeroBits int  // only submit shares whose hash has at least this many leading zero bits
+	MinZeroBits int // only submit shares whose hash has at least this many leading zero bits
+	// Scrypt mines Litecoin-style: targets are checked against the Scrypt
+	// hash and share difficulty 1 is 2^16 times easier. Callbacks still get
+	// the block's identity hash (SHA-256d).
+	Scrypt      bool
 	RollVersion bool // roll version bits inside the negotiated mask
 	// VersionMode selects how rolled versions are built and reported:
 	//   "bip310" (default): version = (job & ~mask) | x; submit version & mask
@@ -559,6 +594,9 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 			en2[0] = byte(thread)
 		}
 		target := ShareTarget(diff)
+		if o.Scrypt {
+			target = pow.Scrypt.ShareTarget(diff)
+		}
 		netTarget := CompactTarget(job.Bits)
 		version := job.Version
 		var rollBits uint32
@@ -578,7 +616,11 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 				break
 			}
 			h := Header(job, en1, en2, version, ntime, nonce)
-			be := HashBE(h)
+			be := HashBE(h) // checked against targets
+			id := be        // the block hash reported to callbacks
+			if o.Scrypt {
+				be = scryptBE(h)
+			}
 			if o.NonBlockShares {
 				hv := new(big.Int).SetBytes(be[:])
 				if hv.Cmp(netTarget) <= 0 || hv.Cmp(target) > 0 {
@@ -588,7 +630,7 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 					continue
 				}
 				if o.OnSubmit != nil {
-					o.OnSubmit(job, hex.EncodeToString(be[:]), version)
+					o.OnSubmit(job, hex.EncodeToString(id[:]), version)
 				}
 				r, err := c.Submit(ctx, o.Worker, job.ID, hex.EncodeToString(en2), fmt.Sprintf("%08x", ntime), fmt.Sprintf("%08x", nonce), vhexFor(version, job.Version, mask, rollBits, o.VersionMode))
 				if err != nil {
@@ -598,7 +640,7 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 					return err
 				}
 				if o.OnResult != nil {
-					o.OnResult(job, r, hex.EncodeToString(be[:]), version)
+					o.OnResult(job, r, hex.EncodeToString(id[:]), version)
 				}
 				select {
 				case <-ctx.Done():
@@ -633,7 +675,7 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 					vhex = fmt.Sprintf("%08x", bits)
 				}
 				if o.OnSubmit != nil {
-					o.OnSubmit(job, hex.EncodeToString(be[:]), version)
+					o.OnSubmit(job, hex.EncodeToString(id[:]), version)
 				}
 				r, err := c.Submit(ctx, o.Worker, job.ID, hex.EncodeToString(en2),
 					fmt.Sprintf("%08x", ntime), fmt.Sprintf("%08x", nonce), vhex)
@@ -641,7 +683,7 @@ func (c *Client) mineThread(ctx context.Context, o MineOptions, thread int, gen 
 					return err
 				}
 				if o.OnResult != nil {
-					o.OnResult(job, r, hex.EncodeToString(be[:]), version)
+					o.OnResult(job, r, hex.EncodeToString(id[:]), version)
 				}
 				break // fresh extranonce2 for the next share
 			}

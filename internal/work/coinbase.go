@@ -25,6 +25,9 @@ type CoinbaseParams struct {
 	Value             int64
 	WitnessCommitment []byte // full output script; nil = no commitment (BCH, or pre-segwit)
 	MinTxSize         int    // BCH: 100 (2018-11 upgrade); BTC: 0
+	// AuxTag is the merged-mining tag (auxpow.Commitment.Tag), pushed right
+	// after the BIP34 height; nil when no aux chain is mined.
+	AuxTag []byte
 }
 
 // Coinbase is a coinbase transaction split for Stratum:
@@ -40,7 +43,7 @@ type Coinbase struct {
 // BuildCoinbase constructs the coinbase transaction:
 //
 //	version=1 | 1 input (null prevout, index 0xffffffff)
-//	scriptSig = <BIP34 height> <push tag[+pad]> <push extranonce1||extranonce2>
+//	scriptSig = <BIP34 height> [<push aux tag>] <push tag[+pad]> <push extranonce1||extranonce2>
 //	sequence=0xffffffff | outputs | locktime=0
 //
 // The extranonce is a proper push so the scriptSig is a well-formed script.
@@ -63,6 +66,9 @@ func BuildCoinbase(p CoinbaseParams) (*Coinbase, error) {
 		tagData := append(append([]byte(nil), p.Tag...), make([]byte, pad)...)
 		var sigPrefix []byte
 		sigPrefix = append(sigPrefix, bitcoin.BIP34HeightScript(p.Height)...)
+		if len(p.AuxTag) > 0 {
+			sigPrefix = bitcoin.AppendPush(sigPrefix, p.AuxTag)
+		}
 		if len(tagData) > 0 {
 			sigPrefix = bitcoin.AppendPush(sigPrefix, tagData)
 		}
