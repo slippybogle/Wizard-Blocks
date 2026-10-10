@@ -1,0 +1,54 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # Status page only; the node has no web interface of its own.
+      APP_HOST: fladnagmai-dogecoin-node_web_1
+      APP_PORT: 8080
+
+  dogecoin0d:
+    # Built by nodes/dogecoin/Dockerfile (release signature and checksum verified
+    # in the build). DRAFT: the digest is pinned once the image is built.
+    image: ghcr.io/fladnagmai/dogecoin-node:1.14.9@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    user: "1000:1000"
+    restart: on-failure
+    stop_grace_period: 15m          # lets the node flush its database on shutdown
+    environment:
+      # For "docker exec ... sh -c 'dogecoin-cli -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS ...'".
+      RPC_USER: ${APP_DOGECOIN_RPC_USER}
+      RPC_PASS: ${APP_DOGECOIN_RPC_PASS}
+    command:
+      - -datadir=/data
+      - -printtoconsole
+      - -server
+      - -prune=2200
+      - -txindex=0
+      - -dbcache=200
+      - -maxmempool=100
+      - -maxconnections=24
+      - -par=2
+      - -rpcthreads=4
+      - -rpcworkqueue=64
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=10.21.0.0/16
+      - -rpcport=22555
+      - -rpcuser=${APP_DOGECOIN_RPC_USER}
+      - -rpcpassword=${APP_DOGECOIN_RPC_PASS}
+      - -zmqpubhashblock=tcp://0.0.0.0:28332
+      - -port=22556
+    ports:
+      - "22556:22556"                      # P2P (optional to forward on the router)
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    networks:
+      default:
+        ipv4_address: ${APP_DOGECOIN_NODE_IP}
+
+  web:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    user: "1000:1000"
+    restart: on-failure
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ${APP_DATA_DIR}/web:/www:ro

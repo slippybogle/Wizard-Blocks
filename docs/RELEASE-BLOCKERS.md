@@ -11,7 +11,7 @@ When the Litecoin node app is installed and synced, run this one line on the
 Umbrel (it saves the current tip block as hex in the home folder):
 
 ```
-C=fladnagmai-litecoin-node_litecoind_1; sudo docker exec $C litecoin-cli -datadir=/data getblock "$(sudo docker exec $C litecoin-cli -datadir=/data getbestblockhash)" 0 > ~/ltc-mainnet-block.hex
+C=fladnagmai-litecoin-node_litecoind_1; sudo docker exec $C sh -c 'litecoin-cli -datadir=/data -rpcport=9332 -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS getblock "$(litecoin-cli -datadir=/data -rpcport=9332 -rpcuser=$RPC_USER -rpcpassword=$RPC_PASS getbestblockhash)" 0' > ~/ltc-mainnet-block.hex
 ```
 
 Then send `~/ltc-mainnet-block.hex`. The container name and data directory
